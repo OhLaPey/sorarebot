@@ -724,90 +724,99 @@ async function scrapePlayerListings(browser, playerSlug, rarity) {
   await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36');
   await page.setViewport({ width: 1400, height: 900 });
   
-  // Utiliser SorareScore.com
-  const sorareScoreUrl = 'https://sorarescore.com/sales/' + playerSlug + '?slug=' + playerSlug + '&rarity=' + rarity + '&inseason=';
+  // Convertir le slug en nom de recherche (dominik-greif -> dominik greif)
+  const searchName = playerSlug.replace(/-/g, '+');
+  
+  // Mapper la rarete vers le format SorareScore
+  const rarityMap = {
+    'super_rare': 'super_rare',
+    'rare': 'rare',
+    'unique': 'unique',
+    'limited': 'limited',
+  };
+  const sorareRarity = rarityMap[rarity] || rarity;
+  
+  // URL SorareScore avec recherche par nom de joueur
+  const sorareScoreUrl = 'https://sorarescore.com/player-stats?gameweek=0&sort_column=price&sort_direction=asc&rarity=' + sorareRarity + '&price_type=current_sale&search=' + searchName;
   
   try {
     await page.goto(sorareScoreUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await sleep(4000);
     
-    // Scroll pour charger le contenu
-    await page.evaluate(() => window.scrollTo(0, 500));
+    // Attendre que le tableau charge
+    await page.waitForSelector('table', { timeout: 10000 }).catch(() => {});
     await sleep(2000);
     
-    // Extraire les prix depuis SorareScore
-    const result = await page.evaluate(() => {
+    // Extraire les prix depuis le tableau SorareScore
+    const result = await page.evaluate((playerSlugLower) => {
       const prices = [];
-      const cards = [];
+      const players = [];
       
-      // Chercher tous les prix sur la page
-      const allText = document.body.innerText;
+      // Chercher toutes les lignes du tableau
+      const rows = document.querySelectorAll('tr');
       
-      // Patterns de prix: "450 €", "€450", "450€", "450.00 €"
-      const priceMatches = allText.match(/(\d{1,3}(?:[,.\s]\d{3})*(?:[,.]\d{1,2})?)\s*[€E]/g) || [];
-      const priceMatches2 = allText.match(/[€]\s*(\d{1,3}(?:[,.\s]\d{3})*(?:[,.]\d{1,2})?)/g) || [];
-      
-      [...priceMatches, ...priceMatches2].forEach(match => {
-        const cleaned = match.replace(/[€E\s]/g, '').replace(/\./g, '').replace(',', '.');
-        const price = parseFloat(cleaned);
-        if (price > 5 && price < 100000 && !prices.includes(price)) {
-          prices.push(price);
+      rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length < 6) return;
+        
+        // La colonne Price est generalement la 6eme (index 5)
+        // Chercher la cellule contenant un prix en €
+        let priceCell = null;
+        let playerName = '';
+        
+        // Extraire le nom du joueur (premiere colonne avec le nom)
+        const firstCell = cells[0];
+        if (firstCell) {
+          playerName = (firstCell.textContent || '').toLowerCase().trim();
         }
-      });
-      
-      // Chercher aussi dans les elements specifiques
-      document.querySelectorAll('*').forEach(el => {
-        const text = el.textContent || '';
-        if (text.length < 20 && text.includes('€')) {
-          const match = text.match(/(\d+(?:[,.]\d{1,2})?)/);
-          if (match) {
-            const price = parseFloat(match[1].replace(',', '.'));
-            if (price > 5 && price < 100000 && !prices.includes(price)) {
-              prices.push(price);
+        
+        // Chercher le prix dans les cellules
+        cells.forEach(cell => {
+          const text = cell.textContent || '';
+          // Pattern: "550.00€" ou "550€" ou "1,234.00€"
+          if (text.includes('€') && !text.includes('N/A')) {
+            const match = text.match(/(\d{1,3}(?:[,.\s]\d{3})*(?:[,.]\d{1,2})?)\s*€/);
+            if (match) {
+              const priceStr = match[1].replace(/[\s,]/g, '').replace(',', '.');
+              const price = parseFloat(priceStr);
+              if (price > 0 && price < 100000) {
+                priceCell = price;
+              }
             }
           }
-        }
-      });
-      
-      // Chercher les liens vers Sorare
-      document.querySelectorAll('a[href*="sorare.com"]').forEach(el => {
-        const href = el.getAttribute('href') || '';
-        if (href.includes('/cards/')) {
-          const match = href.match(/cards\/([^\/\?]+)/);
-          if (match && !cards.includes(match[1])) {
-            cards.push(match[1]);
-          }
+        });
+        
+        if (priceCell !== null) {
+          prices.push(priceCell);
+          players.push(playerName);
         }
       });
       
       return { 
-        prices: [...new Set(prices)].sort((a, b) => a - b), 
-        cards,
-        debug: allText.substring(0, 500)
+        prices: prices,
+        players: players,
+        rowCount: rows.length
       };
-    });
+    }, playerSlug.toLowerCase());
     
     await page.close();
     
     if (result.prices.length > 0) {
-      console.log('  SorareScore: ' + result.prices.slice(0, 5).map(p => p.toFixed(0) + '€').join(', '));
+      // Trier par prix croissant
+      const sortedPrices = [...result.prices].sort((a, b) => a - b);
+      console.log('  SorareScore: ' + sortedPrices.slice(0, 5).map(p => p.toFixed(0) + '€').join(', '));
       
       // Creer les listings
-      const listings = result.prices.map((price, i) => ({
-        slug: result.cards[i] || (playerSlug + '-' + rarity + '-' + i),
+      const listings = sortedPrices.map((price, i) => ({
+        slug: playerSlug + '-' + rarity + '-' + i,
         price,
-        url: result.cards[i] 
-          ? 'https://sorare.com/fr/football/cards/' + result.cards[i]
-          : 'https://sorare.com/fr/football/players/' + playerSlug,
+        url: 'https://sorare.com/fr/football/players/' + playerSlug,
       }));
       
       return listings;
     }
     
-    // Debug si pas de prix
-    console.log('  SorareScore: pas de prix');
-    console.log('  Debug: ' + result.debug.substring(0, 100).replace(/\n/g, ' '));
-    
+    console.log('  SorareScore: pas de prix (rows: ' + result.rowCount + ')');
     return [];
     
   } catch (error) {
