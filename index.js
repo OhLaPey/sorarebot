@@ -247,6 +247,20 @@ async function sendDiscordAlert(embed) {
 // ============================================================
 
 async function createBrowser() {
+  // Chercher le chemin de Chromium
+  let executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  
+  if (!executablePath) {
+    const { execSync } = require('child_process');
+    try {
+      executablePath = execSync('which chromium || which chromium-browser || which google-chrome').toString().trim();
+      console.log('Chromium trouve: ' + executablePath);
+    } catch (e) {
+      console.log('Chromium non trouve via which, utilisation du defaut Puppeteer');
+      executablePath = undefined;
+    }
+  }
+  
   const launchOptions = {
     headless: 'new',
     args: [
@@ -254,8 +268,14 @@ async function createBrowser() {
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
+      '--single-process',
+      '--no-zygote',
     ],
   };
+  
+  if (executablePath) {
+    launchOptions.executablePath = executablePath;
+  }
   
   if (config.NORDVPN_USER && config.NORDVPN_PASS) {
     launchOptions.args.push('--proxy-server=socks5://' + config.NORDVPN_SERVER + ':' + config.NORDVPN_PORT);
