@@ -243,6 +243,20 @@ const commands = [
   new SlashCommandBuilder()
     .setName('marche')
     .setDescription('Resume de tous les listings surveilles'),
+
+  new SlashCommandBuilder()
+    .setName('import')
+    .setDescription('Importer l\'historique des ventes d\'un joueur depuis Sorare')
+    .addStringOption(opt => opt.setName('joueur').setDescription('Slug du joueur').setRequired(true))
+    .addStringOption(opt => opt.setName('rarete').setDescription('Rarete').addChoices(
+      { name: 'Super Rare', value: 'super_rare' },
+      { name: 'Rare', value: 'rare' },
+      { name: 'Unique', value: 'unique' },
+    )),
+
+  new SlashCommandBuilder()
+    .setName('importall')
+    .setDescription('Importer l\'historique des ventes de tous les joueurs de la watchlist'),
 ].map(cmd => cmd.toJSON());
 
 async function registerDiscordCommands() {
@@ -561,6 +575,75 @@ discordClient.on('interactionCreate', async interaction => {
         await interaction.editReply({ embeds: [embed] });
         break;
       }
+
+      case 'import': {
+        const joueurSlug = options.getString('joueur');
+        const rarete = options.getString('rarete') || 'super_rare';
+        
+        await interaction.deferReply();
+        await interaction.editReply('Import en cours pour ' + joueurSlug + ' (' + rarete + ')... Cela peut prendre 30 secondes.');
+        
+        try {
+          const result = await importPlayerSalesHistory(joueurSlug, rarete);
+          
+          const embed = new EmbedBuilder()
+            .setTitle('Import termine')
+            .setColor(0x22C55E)
+            .addFields(
+              { name: 'Joueur', value: joueurSlug, inline: true },
+              { name: 'Rarete', value: rarete.toUpperCase(), inline: true },
+              { name: 'Ventes importees', value: result.imported.toString(), inline: true },
+              { name: 'Deja existantes', value: result.skipped.toString(), inline: true },
+            )
+            .setFooter({ text: 'Donnees sauvegardees dans Google Sheets' });
+          
+          await interaction.followUp({ embeds: [embed] });
+        } catch (error) {
+          console.error('Erreur import:', error);
+          await interaction.followUp('Erreur lors de l\'import: ' + error.message);
+        }
+        break;
+      }
+
+      case 'importall': {
+        await interaction.deferReply();
+        await interaction.editReply('Import de tous les joueurs de la watchlist en cours... Cela peut prendre plusieurs minutes.');
+        
+        let totalImported = 0;
+        let totalSkipped = 0;
+        const results = [];
+        
+        for (const player of watchlist.players) {
+          try {
+            await interaction.editReply('Import en cours: ' + player.name + ' (' + player.rarity + ')...');
+            const result = await importPlayerSalesHistory(player.slug, player.rarity);
+            totalImported += result.imported;
+            totalSkipped += result.skipped;
+            results.push({ name: player.name, imported: result.imported, skipped: result.skipped, success: true });
+          } catch (error) {
+            console.error('Erreur import ' + player.slug + ':', error);
+            results.push({ name: player.name, imported: 0, skipped: 0, success: false });
+          }
+          
+          // Pause entre chaque joueur pour eviter le rate limiting
+          await sleep(3000);
+        }
+        
+        const embed = new EmbedBuilder()
+          .setTitle('Import termine')
+          .setColor(0x22C55E)
+          .setDescription(results.map(r => 
+            (r.success ? '✅' : '❌') + ' ' + r.name + ': ' + r.imported + ' ventes'
+          ).join('\n'))
+          .addFields(
+            { name: 'Total importe', value: totalImported.toString(), inline: true },
+            { name: 'Deja existantes', value: totalSkipped.toString(), inline: true },
+          )
+          .setFooter({ text: 'Donnees sauvegardees dans Google Sheets' });
+        
+        await interaction.followUp({ embeds: [embed] });
+        break;
+      }
     }
   } catch (error) {
     console.error('Erreur commande Discord:', error);
@@ -758,50 +841,115 @@ async function scrapeSalesHistory(browser, playerSlug, rarity) {
   const url = 'https://sorare.com/fr/football/players/' + playerSlug + '/cards/sales-history';
   
   try {
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
     await sleep(3000);
+    
+    // Scroll pour charger plus de resultats
+    for (let i = 0; i < 5; i++) {
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await sleep(1500);
+    }
     
     const sales = await page.evaluate((targetRarity) => {
       const salesData = [];
+      const rarityMap = {
+        'super_rare': 'super rare',
+        'rare': 'rare',
+        'unique': 'unique'
+      };
+      const targetRarityText = rarityMap[targetRarity] || targetRarity;
       
-      document.querySelectorAll('tr').forEach(row => {
+      // Chercher dans le tableau des transactions
+      document.querySelectorAll('tr, [class*="transaction"], [class*="Transaction"], [class*="row"], [class*="Row"]').forEach(row => {
         const text = row.textContent || '';
+        const textLower = text.toLowerCase();
         
-        // Filtrer par rarete
-        if (targetRarity === 'super_rare' && !text.toLowerCase().includes('super rare')) return;
-        if (targetRarity === 'rare' && !text.toLowerCase().includes('rare') && text.toLowerCase().includes('super')) return;
-        if (targetRarity === 'unique' && !text.toLowerCase().includes('unique')) return;
+        // Verifier la rarete
+        if (targetRarity === 'super_rare') {
+          if (!textLower.includes('super rare')) return;
+        } else if (targetRarity === 'rare') {
+          if (!textLower.includes('rare') || textLower.includes('super rare')) return;
+        } else if (targetRarity === 'unique') {
+          if (!textLower.includes('unique')) return;
+        }
         
-        const priceMatch = text.match(/(\d+[\s,.]?\d*)\s*[E$]/i);
+        // Extraire le prix (format: 802,56 € ou 802.56 € ou $802.56)
+        const priceMatch = text.match(/(\d[\d\s]*[,.]?\d*)\s*[€E\$]/i);
         if (!priceMatch) return;
         
-        const price = parseFloat(priceMatch[1].replace(/\s/g, '').replace(',', '.'));
+        let priceStr = priceMatch[1].replace(/\s/g, '').replace(',', '.');
+        const price = parseFloat(priceStr);
+        if (isNaN(price) || price <= 0) return;
         
+        // Extraire le type de vente
         let type = 'unknown';
-        if (text.includes('Enchere')) type = 'auction';
-        if (text.includes('Achat immediat') || text.includes('Buy now')) type = 'buy_now';
-        if (text.includes('Trade')) type = 'trade';
-        if (text.includes('Offre directe')) type = 'direct_offer';
+        if (textLower.includes('enchère') || textLower.includes('enchere') || textLower.includes('auction')) type = 'auction';
+        else if (textLower.includes('achat immédiat') || textLower.includes('achat immediat') || textLower.includes('buy now')) type = 'buy_now';
+        else if (textLower.includes('trade')) type = 'trade';
+        else if (textLower.includes('offre directe') || textLower.includes('direct offer')) type = 'direct_offer';
         
-        const dateMatch = text.match(/il y a (\d+) (jour|semaine|mois|an)/i);
+        // Extraire la date relative
         let date = new Date();
-        if (dateMatch) {
-          const amount = parseInt(dateMatch[1]);
-          const unit = dateMatch[2].toLowerCase();
-          if (unit.includes('jour')) date.setDate(date.getDate() - amount);
-          if (unit.includes('semaine')) date.setDate(date.getDate() - amount * 7);
-          if (unit.includes('mois')) date.setMonth(date.getMonth() - amount);
-          if (unit.includes('an')) date.setFullYear(date.getFullYear() - amount);
+        const datePatterns = [
+          { regex: /il y a (\d+)\s*jour/i, unit: 'day' },
+          { regex: /il y a (\d+)\s*semaine/i, unit: 'week' },
+          { regex: /il y a (\d+)\s*mois/i, unit: 'month' },
+          { regex: /il y a (\d+)\s*an/i, unit: 'year' },
+          { regex: /(\d+)\s*day/i, unit: 'day' },
+          { regex: /(\d+)\s*week/i, unit: 'week' },
+          { regex: /(\d+)\s*month/i, unit: 'month' },
+          { regex: /(\d+)\s*year/i, unit: 'year' },
+        ];
+        
+        for (const pattern of datePatterns) {
+          const match = text.match(pattern.regex);
+          if (match) {
+            const amount = parseInt(match[1]);
+            if (pattern.unit === 'day') date.setDate(date.getDate() - amount);
+            else if (pattern.unit === 'week') date.setDate(date.getDate() - amount * 7);
+            else if (pattern.unit === 'month') date.setMonth(date.getMonth() - amount);
+            else if (pattern.unit === 'year') date.setFullYear(date.getFullYear() - amount);
+            break;
+          }
         }
+        
+        // Extraire la saison et le serial (ex: 2025-26 - Super Rare 9/10)
+        let season = '';
+        let serial = '';
+        const seasonMatch = text.match(/(\d{4}-\d{2})/);
+        if (seasonMatch) season = seasonMatch[1];
+        const serialMatch = text.match(/(\d+)\/(\d+)/);
+        if (serialMatch) serial = serialMatch[1] + '/' + serialMatch[2];
+        
+        // Extraire acheteur et vendeur si disponibles
+        let buyer = '';
+        let seller = '';
+        const userLinks = row.querySelectorAll('a[href*="/manager/"]');
+        if (userLinks.length >= 1) buyer = userLinks[0].textContent?.trim() || '';
+        if (userLinks.length >= 2) seller = userLinks[1].textContent?.trim() || '';
+        
+        // Eviter les doublons en creant une cle unique
+        const uniqueKey = price + '_' + type + '_' + date.toISOString().split('T')[0] + '_' + serial;
         
         salesData.push({
           price,
           type,
           date: date.toISOString(),
+          season,
+          serial,
+          buyer,
+          seller,
+          uniqueKey,
         });
       });
       
-      return salesData;
+      // Dedupliquer
+      const seen = new Set();
+      return salesData.filter(sale => {
+        if (seen.has(sale.uniqueKey)) return false;
+        seen.add(sale.uniqueKey);
+        return true;
+      });
     }, rarity);
     
     await page.close();
@@ -811,6 +959,77 @@ async function scrapeSalesHistory(browser, playerSlug, rarity) {
     console.error('Erreur scraping historique ' + playerSlug + ':', error.message);
     await page.close();
     return [];
+  }
+}
+
+async function importPlayerSalesHistory(playerSlug, rarity) {
+  console.log('Import historique: ' + playerSlug + ' (' + rarity + ')');
+  
+  let browser;
+  let imported = 0;
+  let skipped = 0;
+  const salesRows = [];
+  
+  try {
+    browser = await createBrowser();
+    
+    const sales = await scrapeSalesHistory(browser, playerSlug, rarity);
+    console.log('  -> ' + sales.length + ' ventes trouvees sur Sorare');
+    
+    const key = playerSlug + '_' + rarity;
+    if (!salesHistory[key]) salesHistory[key] = [];
+    
+    const playerName = playerSlug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    
+    for (const sale of sales) {
+      // Verifier si la vente existe deja
+      const exists = salesHistory[key].find(s => 
+        Math.abs(new Date(s.date).getTime() - new Date(sale.date).getTime()) < 86400000 && // Meme jour
+        s.price === sale.price &&
+        s.type === sale.type
+      );
+      
+      if (!exists) {
+        salesHistory[key].push({
+          price: sale.price,
+          type: sale.type,
+          date: sale.date,
+          season: sale.season,
+          serial: sale.serial,
+        });
+        
+        salesRows.push([
+          new Date(sale.date).toLocaleDateString('fr-FR'),
+          playerName,
+          playerSlug,
+          rarity,
+          sale.season,
+          sale.serial,
+          sale.price,
+          sale.type,
+          sale.buyer,
+          sale.seller,
+        ]);
+        
+        imported++;
+      } else {
+        skipped++;
+      }
+    }
+    
+    // Ecrire dans Google Sheets
+    if (sheetsClient && salesRows.length > 0) {
+      await appendToSheet('Ventes', salesRows);
+      console.log('  -> ' + imported + ' ventes sauvegardees dans Google Sheets');
+    }
+    
+    return { imported, skipped };
+    
+  } catch (error) {
+    console.error('Erreur import:', error.message);
+    throw error;
+  } finally {
+    if (browser) await browser.close();
   }
 }
 
