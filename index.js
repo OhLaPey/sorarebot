@@ -715,127 +715,103 @@ async function createBrowser() {
 async function scrapePlayerListings(browser, playerSlug, rarity) {
   const page = await browser.newPage();
   
-  if (config.NORDVPN_USER && config.NORDVPN_PASS) {
-    await page.authenticate({
-      username: config.NORDVPN_USER,
-      password: config.NORDVPN_PASS,
-    });
-  }
+  // Headers realistes
+  await page.setExtraHTTPHeaders({
+    'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+  });
   
-  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36');
   await page.setViewport({ width: 1400, height: 900 });
   
-  const url = 'https://sorare.com/fr/football/players/' + playerSlug + '/cards?s=Lowest+Price&rarity=' + rarity + '&sale=true';
+  // Utiliser SorareScore.com
+  const sorareScoreUrl = 'https://sorarescore.com/sales/' + playerSlug + '?slug=' + playerSlug + '&rarity=' + rarity + '&inseason=';
   
   try {
-    await page.goto(url, { waitUntil: 'networkidle0', timeout: 45000 });
+    await page.goto(sorareScoreUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await sleep(4000);
     
-    // Attendre que le contenu charge
-    await page.waitForSelector('a[href*="/cards/"]', { timeout: 15000 }).catch(() => {});
-    
-    // Attendre un peu plus pour le rendu React
-    await sleep(5000);
-    
-    // Scroll pour declencher le lazy loading
-    for (let i = 0; i < 3; i++) {
-      await page.evaluate(() => window.scrollBy(0, 300));
-      await sleep(1000);
-    }
-    
-    // Remonter en haut
-    await page.evaluate(() => window.scrollTo(0, 0));
+    // Scroll pour charger le contenu
+    await page.evaluate(() => window.scrollTo(0, 500));
     await sleep(2000);
     
-    // Extraire les donnees avec une methode plus robuste
-    const data = await page.evaluate(() => {
-      const results = [];
-      const allPrices = [];
+    // Extraire les prix depuis SorareScore
+    const result = await page.evaluate(() => {
+      const prices = [];
+      const cards = [];
       
-      // Methode 1: Chercher tous les textes contenant €
-      const allElements = document.querySelectorAll('*');
-      allElements.forEach(el => {
-        if (el.children.length === 0) { // Seulement les feuilles
-          const text = el.textContent || '';
-          const match = text.match(/^[\s]*(\d{1,3}(?:[,.\s]\d{3})*(?:[,.]\d{1,2})?)\s*€[\s]*$/);
+      // Chercher tous les prix sur la page
+      const allText = document.body.innerText;
+      
+      // Patterns de prix: "450 €", "€450", "450€", "450.00 €"
+      const priceMatches = allText.match(/(\d{1,3}(?:[,.\s]\d{3})*(?:[,.]\d{1,2})?)\s*[€E]/g) || [];
+      const priceMatches2 = allText.match(/[€]\s*(\d{1,3}(?:[,.\s]\d{3})*(?:[,.]\d{1,2})?)/g) || [];
+      
+      [...priceMatches, ...priceMatches2].forEach(match => {
+        const cleaned = match.replace(/[€E\s]/g, '').replace(/\./g, '').replace(',', '.');
+        const price = parseFloat(cleaned);
+        if (price > 5 && price < 100000 && !prices.includes(price)) {
+          prices.push(price);
+        }
+      });
+      
+      // Chercher aussi dans les elements specifiques
+      document.querySelectorAll('*').forEach(el => {
+        const text = el.textContent || '';
+        if (text.length < 20 && text.includes('€')) {
+          const match = text.match(/(\d+(?:[,.]\d{1,2})?)/);
           if (match) {
-            const priceStr = match[1].replace(/[\s.]/g, '').replace(',', '.');
-            const price = parseFloat(priceStr);
-            if (price > 5 && price < 100000) {
-              allPrices.push(price);
+            const price = parseFloat(match[1].replace(',', '.'));
+            if (price > 5 && price < 100000 && !prices.includes(price)) {
+              prices.push(price);
             }
           }
         }
       });
       
-      // Methode 2: Chercher les cartes et leurs conteneurs
-      const cardLinks = document.querySelectorAll('a[href*="/cards/"]');
-      
-      cardLinks.forEach(link => {
-        const href = link.getAttribute('href');
-        if (!href || !href.includes('/cards/')) return;
-        
-        const slug = href.split('/cards/')[1]?.split('?')[0]?.split('/')[0];
-        if (!slug || results.find(r => r.slug === slug)) return;
-        
-        // Chercher le prix dans les elements proches
-        let price = null;
-        let searchArea = link.closest('div[class*="card"], div[class*="Card"], article, section') || link.parentElement?.parentElement?.parentElement;
-        
-        if (searchArea) {
-          const priceElements = searchArea.querySelectorAll('*');
-          for (const el of priceElements) {
-            const text = el.textContent || '';
-            if (text.includes('€') && !text.includes('Voir') && text.length < 30) {
-              const match = text.match(/(\d{1,3}(?:[,.\s]\d{3})*(?:[,.]\d{1,2})?)\s*€/);
-              if (match) {
-                const priceStr = match[1].replace(/[\s.]/g, '').replace(',', '.');
-                price = parseFloat(priceStr);
-                if (price > 5 && price < 100000) break;
-                price = null;
-              }
-            }
+      // Chercher les liens vers Sorare
+      document.querySelectorAll('a[href*="sorare.com"]').forEach(el => {
+        const href = el.getAttribute('href') || '';
+        if (href.includes('/cards/')) {
+          const match = href.match(/cards\/([^\/\?]+)/);
+          if (match && !cards.includes(match[1])) {
+            cards.push(match[1]);
           }
         }
-        
-        results.push({ slug, price });
       });
       
-      return { results, allPrices: [...new Set(allPrices)].sort((a, b) => a - b) };
+      return { 
+        prices: [...new Set(prices)].sort((a, b) => a - b), 
+        cards,
+        debug: allText.substring(0, 500)
+      };
     });
     
     await page.close();
     
-    // Construire les listings
-    let listings = data.results;
-    
-    // Si pas de prix dans les cartes mais des prix trouves sur la page, les assigner
-    if (listings.every(l => !l.price) && data.allPrices.length > 0) {
-      listings = listings.map((l, i) => ({
-        ...l,
-        price: data.allPrices[i] || null,
+    if (result.prices.length > 0) {
+      console.log('  SorareScore: ' + result.prices.slice(0, 5).map(p => p.toFixed(0) + '€').join(', '));
+      
+      // Creer les listings
+      const listings = result.prices.map((price, i) => ({
+        slug: result.cards[i] || (playerSlug + '-' + rarity + '-' + i),
+        price,
+        url: result.cards[i] 
+          ? 'https://sorare.com/fr/football/cards/' + result.cards[i]
+          : 'https://sorare.com/fr/football/players/' + playerSlug,
       }));
+      
+      return listings;
     }
     
-    // Ajouter les URLs
-    listings = listings.map(l => ({
-      ...l,
-      url: 'https://sorare.com/fr/football/cards/' + l.slug,
-    }));
+    // Debug si pas de prix
+    console.log('  SorareScore: pas de prix');
+    console.log('  Debug: ' + result.debug.substring(0, 100).replace(/\n/g, ' '));
     
-    // Log
-    const pricesFound = listings.filter(l => l.price).map(l => l.price);
-    if (pricesFound.length > 0) {
-      console.log('  Prix: ' + pricesFound.slice(0, 5).map(p => p.toFixed(0) + '€').join(', '));
-    } else if (data.allPrices.length > 0) {
-      console.log('  Prix page: ' + data.allPrices.slice(0, 5).map(p => p.toFixed(0) + '€').join(', '));
-    } else {
-      console.log('  Aucun prix trouve (cartes: ' + listings.length + ')');
-    }
-    
-    return listings;
+    return [];
     
   } catch (error) {
-    console.error('Erreur scraping ' + playerSlug + ':', error.message);
+    console.log('  SorareScore erreur: ' + error.message.substring(0, 50));
     try { await page.close(); } catch (e) {}
     return [];
   }
