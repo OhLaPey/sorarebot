@@ -9,6 +9,7 @@ const express = require('express');
 const puppeteer = require('puppeteer');
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const { google } = require('googleapis');
+const Tesseract = require('tesseract.js');
 
 // ============================================================
 //                    CONFIGURATION
@@ -723,14 +724,16 @@ async function scrapePlayerListings(browser, playerSlug, rarity) {
   }
   
   await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+  await page.setViewport({ width: 1400, height: 900 });
   
   const url = 'https://sorare.com/fr/football/players/' + playerSlug + '/cards?s=Lowest+Price&rarity=' + rarity + '&sale=true';
   
   try {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-    await page.waitForSelector('[data-testid="card-item"], [class*="CardItem"], a[href*="/cards/"]', { timeout: 10000 }).catch(() => {});
+    await sleep(3000);
     
-    const listings = await page.evaluate(() => {
+    // D'abord essayer le scraping classique
+    let listings = await page.evaluate(() => {
       const cards = [];
       
       document.querySelectorAll('a[href*="/cards/"]').forEach(el => {
@@ -741,7 +744,7 @@ async function scrapePlayerListings(browser, playerSlug, rarity) {
         if (!cardSlug) return;
         
         const text = el.textContent || '';
-        const priceMatch = text.match(/(\d+[\s,.]?\d*)\s*[E$]/i);
+        const priceMatch = text.match(/(\d[\d\s]*[,.]?\d*)\s*[€E\$]/i);
         
         let price = null;
         if (priceMatch) {
@@ -759,6 +762,45 @@ async function scrapePlayerListings(browser, playerSlug, rarity) {
       
       return cards;
     });
+    
+    // Si pas de prix trouves, utiliser OCR
+    if (listings.length === 0 || listings.every(l => l.price === null)) {
+      console.log('  Scraping classique echoue, utilisation OCR...');
+      
+      const screenshot = await page.screenshot({ 
+        encoding: 'base64',
+        fullPage: false,
+        clip: { x: 0, y: 150, width: 1400, height: 600 }
+      });
+      
+      const { data: { text } } = await Tesseract.recognize(
+        Buffer.from(screenshot, 'base64'),
+        'fra+eng'
+      );
+      
+      // Extraire les prix du texte OCR
+      const priceRegex = /(\d[\d\s]*[,.]?\d*)\s*[€E]/gi;
+      const prices = [];
+      let match;
+      
+      while ((match = priceRegex.exec(text)) !== null) {
+        let priceStr = match[1].replace(/\s/g, '').replace(',', '.');
+        const price = parseFloat(priceStr);
+        if (!isNaN(price) && price > 10 && price < 50000) {
+          prices.push(price);
+        }
+      }
+      
+      // Creer des listings avec les prix trouves
+      if (prices.length > 0) {
+        listings = prices.map((price, i) => ({
+          slug: playerSlug + '-ocr-' + i,
+          price: price,
+          url: url,
+        }));
+        console.log('  OCR: ' + prices.length + ' prix trouves');
+      }
+    }
     
     await page.close();
     return listings;
@@ -837,120 +879,63 @@ async function scrapeSalesHistory(browser, playerSlug, rarity) {
   const page = await browser.newPage();
   
   await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+  await page.setViewport({ width: 1400, height: 900 });
   
   const url = 'https://sorare.com/fr/football/players/' + playerSlug + '/cards/sales-history';
   
   try {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
-    await sleep(3000);
+    await sleep(4000);
+    
+    // Cliquer sur l'onglet de la bonne rarete si necessaire
+    try {
+      if (rarity === 'super_rare') {
+        await page.click('[data-testid="super_rare"], button:has-text("Super Rare")').catch(() => {});
+      } else if (rarity === 'rare') {
+        await page.click('[data-testid="rare"], button:has-text("Rare")').catch(() => {});
+      } else if (rarity === 'unique') {
+        await page.click('[data-testid="unique"], button:has-text("Unique")').catch(() => {});
+      }
+      await sleep(2000);
+    } catch (e) {
+      // Pas grave si le clic echoue
+    }
     
     // Scroll pour charger plus de resultats
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 3; i++) {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       await sleep(1500);
     }
     
-    const sales = await page.evaluate((targetRarity) => {
-      const salesData = [];
-      const rarityMap = {
-        'super_rare': 'super rare',
-        'rare': 'rare',
-        'unique': 'unique'
-      };
-      const targetRarityText = rarityMap[targetRarity] || targetRarity;
-      
-      // Chercher dans le tableau des transactions
-      document.querySelectorAll('tr, [class*="transaction"], [class*="Transaction"], [class*="row"], [class*="Row"]').forEach(row => {
-        const text = row.textContent || '';
-        const textLower = text.toLowerCase();
-        
-        // Verifier la rarete
-        if (targetRarity === 'super_rare') {
-          if (!textLower.includes('super rare')) return;
-        } else if (targetRarity === 'rare') {
-          if (!textLower.includes('rare') || textLower.includes('super rare')) return;
-        } else if (targetRarity === 'unique') {
-          if (!textLower.includes('unique')) return;
-        }
-        
-        // Extraire le prix (format: 802,56 € ou 802.56 € ou $802.56)
-        const priceMatch = text.match(/(\d[\d\s]*[,.]?\d*)\s*[€E\$]/i);
-        if (!priceMatch) return;
-        
-        let priceStr = priceMatch[1].replace(/\s/g, '').replace(',', '.');
-        const price = parseFloat(priceStr);
-        if (isNaN(price) || price <= 0) return;
-        
-        // Extraire le type de vente
-        let type = 'unknown';
-        if (textLower.includes('enchère') || textLower.includes('enchere') || textLower.includes('auction')) type = 'auction';
-        else if (textLower.includes('achat immédiat') || textLower.includes('achat immediat') || textLower.includes('buy now')) type = 'buy_now';
-        else if (textLower.includes('trade')) type = 'trade';
-        else if (textLower.includes('offre directe') || textLower.includes('direct offer')) type = 'direct_offer';
-        
-        // Extraire la date relative
-        let date = new Date();
-        const datePatterns = [
-          { regex: /il y a (\d+)\s*jour/i, unit: 'day' },
-          { regex: /il y a (\d+)\s*semaine/i, unit: 'week' },
-          { regex: /il y a (\d+)\s*mois/i, unit: 'month' },
-          { regex: /il y a (\d+)\s*an/i, unit: 'year' },
-          { regex: /(\d+)\s*day/i, unit: 'day' },
-          { regex: /(\d+)\s*week/i, unit: 'week' },
-          { regex: /(\d+)\s*month/i, unit: 'month' },
-          { regex: /(\d+)\s*year/i, unit: 'year' },
-        ];
-        
-        for (const pattern of datePatterns) {
-          const match = text.match(pattern.regex);
-          if (match) {
-            const amount = parseInt(match[1]);
-            if (pattern.unit === 'day') date.setDate(date.getDate() - amount);
-            else if (pattern.unit === 'week') date.setDate(date.getDate() - amount * 7);
-            else if (pattern.unit === 'month') date.setMonth(date.getMonth() - amount);
-            else if (pattern.unit === 'year') date.setFullYear(date.getFullYear() - amount);
-            break;
+    // Remonter pour capturer le tableau
+    await page.evaluate(() => window.scrollTo(0, 400));
+    await sleep(1000);
+    
+    // Capture d'ecran de la page
+    const screenshot = await page.screenshot({ 
+      encoding: 'base64',
+      fullPage: false,
+      clip: { x: 0, y: 200, width: 1400, height: 700 }
+    });
+    
+    console.log('  Screenshot prise, lancement OCR...');
+    
+    // OCR avec Tesseract
+    const { data: { text } } = await Tesseract.recognize(
+      Buffer.from(screenshot, 'base64'),
+      'fra+eng',
+      { 
+        logger: m => {
+          if (m.status === 'recognizing text') {
+            process.stdout.write('\r  OCR: ' + Math.round(m.progress * 100) + '%');
           }
         }
-        
-        // Extraire la saison et le serial (ex: 2025-26 - Super Rare 9/10)
-        let season = '';
-        let serial = '';
-        const seasonMatch = text.match(/(\d{4}-\d{2})/);
-        if (seasonMatch) season = seasonMatch[1];
-        const serialMatch = text.match(/(\d+)\/(\d+)/);
-        if (serialMatch) serial = serialMatch[1] + '/' + serialMatch[2];
-        
-        // Extraire acheteur et vendeur si disponibles
-        let buyer = '';
-        let seller = '';
-        const userLinks = row.querySelectorAll('a[href*="/manager/"]');
-        if (userLinks.length >= 1) buyer = userLinks[0].textContent?.trim() || '';
-        if (userLinks.length >= 2) seller = userLinks[1].textContent?.trim() || '';
-        
-        // Eviter les doublons en creant une cle unique
-        const uniqueKey = price + '_' + type + '_' + date.toISOString().split('T')[0] + '_' + serial;
-        
-        salesData.push({
-          price,
-          type,
-          date: date.toISOString(),
-          season,
-          serial,
-          buyer,
-          seller,
-          uniqueKey,
-        });
-      });
-      
-      // Dedupliquer
-      const seen = new Set();
-      return salesData.filter(sale => {
-        if (seen.has(sale.uniqueKey)) return false;
-        seen.add(sale.uniqueKey);
-        return true;
-      });
-    }, rarity);
+      }
+    );
+    console.log('\n  OCR termine');
+    
+    // Parser le texte OCR pour extraire les ventes
+    const sales = parseOCRText(text, rarity);
     
     await page.close();
     return sales;
@@ -960,6 +945,113 @@ async function scrapeSalesHistory(browser, playerSlug, rarity) {
     await page.close();
     return [];
   }
+}
+
+function parseOCRText(text, rarity) {
+  const sales = [];
+  const lines = text.split('\n').filter(l => l.trim());
+  
+  console.log('  Parsing ' + lines.length + ' lignes OCR...');
+  
+  // Chercher les lignes avec des prix (format: nombre suivi de € ou E)
+  const priceRegex = /(\d[\d\s]*[,.]?\d*)\s*[€E]/gi;
+  const dateRegex = /il y a (\d+)\s*(jour|semaine|mois|an|day|week|month|year)/gi;
+  
+  // Parcourir le texte pour trouver des patterns de ventes
+  let matches;
+  const priceMatches = [];
+  
+  // Extraire tous les prix
+  while ((matches = priceRegex.exec(text)) !== null) {
+    let priceStr = matches[1].replace(/\s/g, '').replace(',', '.');
+    const price = parseFloat(priceStr);
+    if (!isNaN(price) && price > 10 && price < 50000) { // Filtre de coherence
+      priceMatches.push({ price, index: matches.index });
+    }
+  }
+  
+  // Extraire toutes les dates
+  const dateMatches = [];
+  while ((matches = dateRegex.exec(text)) !== null) {
+    const amount = parseInt(matches[1]);
+    const unit = matches[2].toLowerCase();
+    let date = new Date();
+    
+    if (unit.includes('jour') || unit.includes('day')) date.setDate(date.getDate() - amount);
+    else if (unit.includes('semaine') || unit.includes('week')) date.setDate(date.getDate() - amount * 7);
+    else if (unit.includes('mois') || unit.includes('month')) date.setMonth(date.getMonth() - amount);
+    else if (unit.includes('an') || unit.includes('year')) date.setFullYear(date.getFullYear() - amount);
+    
+    dateMatches.push({ date, index: matches.index });
+  }
+  
+  // Detecter les types de vente
+  const typePatterns = [
+    { regex: /ench[eè]re/gi, type: 'auction' },
+    { regex: /achat\s*imm[eé]diat/gi, type: 'buy_now' },
+    { regex: /trade/gi, type: 'trade' },
+    { regex: /offre\s*directe/gi, type: 'direct_offer' },
+  ];
+  
+  // Associer les prix aux dates les plus proches
+  for (const priceMatch of priceMatches) {
+    // Trouver la date la plus proche (dans un rayon de 200 caracteres)
+    let closestDate = null;
+    let minDistance = 300;
+    
+    for (const dateMatch of dateMatches) {
+      const distance = Math.abs(dateMatch.index - priceMatch.index);
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestDate = dateMatch.date;
+      }
+    }
+    
+    // Trouver le type de vente
+    let type = 'unknown';
+    const contextStart = Math.max(0, priceMatch.index - 100);
+    const contextEnd = Math.min(text.length, priceMatch.index + 100);
+    const context = text.substring(contextStart, contextEnd).toLowerCase();
+    
+    for (const pattern of typePatterns) {
+      if (pattern.regex.test(context)) {
+        type = pattern.type;
+        break;
+      }
+    }
+    
+    // Extraire la saison si presente
+    let season = '';
+    const seasonMatch = context.match(/(\d{4}-\d{2})/);
+    if (seasonMatch) season = seasonMatch[1];
+    
+    // Extraire le serial si present
+    let serial = '';
+    const serialMatch = context.match(/(\d+)\s*\/\s*(\d+)/);
+    if (serialMatch) serial = serialMatch[1] + '/' + serialMatch[2];
+    
+    sales.push({
+      price: priceMatch.price,
+      type,
+      date: closestDate ? closestDate.toISOString() : new Date().toISOString(),
+      season,
+      serial,
+      buyer: '',
+      seller: '',
+      uniqueKey: priceMatch.price + '_' + type + '_' + (closestDate ? closestDate.toISOString().split('T')[0] : 'now'),
+    });
+  }
+  
+  // Dedupliquer
+  const seen = new Set();
+  const uniqueSales = sales.filter(sale => {
+    if (seen.has(sale.uniqueKey)) return false;
+    seen.add(sale.uniqueKey);
+    return true;
+  });
+  
+  console.log('  ' + uniqueSales.length + ' ventes extraites par OCR');
+  return uniqueSales;
 }
 
 async function importPlayerSalesHistory(playerSlug, rarity) {
