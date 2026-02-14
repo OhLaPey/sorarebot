@@ -1,12 +1,14 @@
 /**
  * ============================================================
  *          SORARE PRICE ALERT BOT - PPATCH Edition
+ *          Avec tracking des prix et Google Sheets
  * ============================================================
  */
 
 const express = require('express');
 const puppeteer = require('puppeteer');
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { google } = require('googleapis');
 
 // ============================================================
 //                    CONFIGURATION
@@ -22,6 +24,8 @@ const config = {
   NORDVPN_SERVER: process.env.NORDVPN_SERVER || 'fr751.nordvpn.com',
   NORDVPN_PORT: 1080,
   SCAN_INTERVAL_MS: 5 * 60 * 1000,
+  GOOGLE_CREDENTIALS: process.env.GOOGLE_CREDENTIALS,
+  GOOGLE_SHEET_ID: process.env.GOOGLE_SHEET_ID || '1l4fRJjsajGOQ4jYDdAcL7i9x5gtaG8e11KXRksw6AXI',
 };
 
 // ============================================================
@@ -54,6 +58,125 @@ let stats = {
   errors: 0,
 };
 
+// Cache pour les données de prix (en mémoire)
+let priceHistory = {};
+let salesHistory = {};
+
+// ============================================================
+//                    GOOGLE SHEETS
+// ============================================================
+
+let sheetsClient = null;
+
+async function initGoogleSheets() {
+  if (!config.GOOGLE_CREDENTIALS) {
+    console.log('Google Sheets non configure (GOOGLE_CREDENTIALS manquant)');
+    return false;
+  }
+
+  try {
+    const credentials = JSON.parse(config.GOOGLE_CREDENTIALS);
+    const auth = new google.auth.GoogleAuth({
+      credentials,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+    
+    sheetsClient = google.sheets({ version: 'v4', auth });
+    
+    // Vérifier/créer les onglets nécessaires
+    await ensureSheetTabs();
+    
+    console.log('Google Sheets connecte');
+    return true;
+  } catch (error) {
+    console.error('Erreur init Google Sheets:', error.message);
+    return false;
+  }
+}
+
+async function ensureSheetTabs() {
+  if (!sheetsClient) return;
+
+  try {
+    const response = await sheetsClient.spreadsheets.get({
+      spreadsheetId: config.GOOGLE_SHEET_ID,
+    });
+
+    const existingSheets = response.data.sheets.map(s => s.properties.title);
+    const requiredSheets = ['Listings', 'Prix_Timeline', 'Ventes'];
+
+    for (const sheetName of requiredSheets) {
+      if (!existingSheets.includes(sheetName)) {
+        await sheetsClient.spreadsheets.batchUpdate({
+          spreadsheetId: config.GOOGLE_SHEET_ID,
+          resource: {
+            requests: [{
+              addSheet: {
+                properties: { title: sheetName }
+              }
+            }]
+          }
+        });
+        console.log('Onglet cree: ' + sheetName);
+
+        // Ajouter les headers
+        const headers = getHeadersForSheet(sheetName);
+        await sheetsClient.spreadsheets.values.update({
+          spreadsheetId: config.GOOGLE_SHEET_ID,
+          range: sheetName + '!A1',
+          valueInputOption: 'RAW',
+          resource: { values: [headers] }
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Erreur creation onglets:', error.message);
+  }
+}
+
+function getHeadersForSheet(sheetName) {
+  switch (sheetName) {
+    case 'Listings':
+      return ['Date', 'Heure', 'Joueur', 'Slug', 'Rarete', 'Prix_Min_EUR', 'Nb_Listings', 'Card_Slug'];
+    case 'Prix_Timeline':
+      return ['Timestamp', 'Joueur', 'Slug', 'Rarete', 'Prix_Min', 'Prix_Median', 'Nb_Listings'];
+    case 'Ventes':
+      return ['Date', 'Joueur', 'Slug', 'Rarete', 'Saison', 'Serial', 'Prix_EUR', 'Type', 'Acheteur', 'Vendeur'];
+    default:
+      return [];
+  }
+}
+
+async function appendToSheet(sheetName, rows) {
+  if (!sheetsClient || rows.length === 0) return;
+
+  try {
+    await sheetsClient.spreadsheets.values.append({
+      spreadsheetId: config.GOOGLE_SHEET_ID,
+      range: sheetName + '!A:Z',
+      valueInputOption: 'USER_ENTERED',
+      resource: { values: rows }
+    });
+  } catch (error) {
+    console.error('Erreur ecriture ' + sheetName + ':', error.message);
+  }
+}
+
+async function getSheetData(sheetName, range) {
+  if (!sheetsClient) return [];
+
+  try {
+    const response = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: config.GOOGLE_SHEET_ID,
+      range: sheetName + '!' + range,
+    });
+    return response.data.values || [];
+  } catch (error) {
+    console.error('Erreur lecture ' + sheetName + ':', error.message);
+    return [];
+  }
+}
+
 // ============================================================
 //                    DISCORD BOT
 // ============================================================
@@ -79,7 +202,7 @@ const commands = [
       { name: 'Rare', value: 'rare' },
       { name: 'Unique', value: 'unique' },
     ))
-    .addNumberOption(opt => opt.setName('maxprice').setDescription('Prix max en $ (optionnel)')),
+    .addNumberOption(opt => opt.setName('maxprice').setDescription('Prix max en EUR (optionnel)')),
   
   new SlashCommandBuilder()
     .setName('removeplayer')
@@ -90,7 +213,7 @@ const commands = [
     .setName('setprice')
     .setDescription('Definir un seuil de prix pour un joueur')
     .addStringOption(opt => opt.setName('slug').setDescription('Slug du joueur').setRequired(true))
-    .addNumberOption(opt => opt.setName('maxprice').setDescription('Prix max en $').setRequired(true)),
+    .addNumberOption(opt => opt.setName('maxprice').setDescription('Prix max en EUR').setRequired(true)),
   
   new SlashCommandBuilder()
     .setName('stats')
@@ -99,6 +222,27 @@ const commands = [
   new SlashCommandBuilder()
     .setName('scan')
     .setDescription('Lancer un scan immediat'),
+
+  new SlashCommandBuilder()
+    .setName('prix')
+    .setDescription('Affiche le prix actuel et la tendance d\'un joueur')
+    .addStringOption(opt => opt.setName('joueur').setDescription('Slug du joueur').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('historique')
+    .setDescription('Affiche l\'historique des prix avec graphique')
+    .addStringOption(opt => opt.setName('joueur').setDescription('Slug du joueur').setRequired(true))
+    .addStringOption(opt => opt.setName('periode').setDescription('Periode').addChoices(
+      { name: '1 semaine', value: '7' },
+      { name: '1 mois', value: '30' },
+      { name: '3 mois', value: '90' },
+      { name: '6 mois', value: '180' },
+      { name: '1 an', value: '365' },
+    )),
+
+  new SlashCommandBuilder()
+    .setName('marche')
+    .setDescription('Resume de tous les listings surveilles'),
 ].map(cmd => cmd.toJSON());
 
 async function registerDiscordCommands() {
@@ -133,13 +277,13 @@ discordClient.on('interactionCreate', async interaction => {
             {
               name: 'Clubs',
               value: watchlist.clubs.length > 0 
-                ? watchlist.clubs.map(c => '- ' + c.name + ' (' + c.rarity + ')' + (c.maxPrice ? ' - Max: $' + c.maxPrice : '')).join('\n')
+                ? watchlist.clubs.map(c => '- ' + c.name + ' (' + c.rarity + ')' + (c.maxPrice ? ' - Max: ' + c.maxPrice + 'E' : '')).join('\n')
                 : 'Aucun club surveille',
             },
             {
               name: 'Joueurs',
               value: watchlist.players.length > 0
-                ? watchlist.players.map(p => '- ' + p.name + ' (' + p.rarity + ')' + (p.maxPrice ? ' - Max: $' + p.maxPrice : '')).join('\n')
+                ? watchlist.players.map(p => '- ' + p.name + ' (' + p.rarity + ')' + (p.maxPrice ? ' - Max: ' + p.maxPrice + 'E' : '')).join('\n')
                 : 'Aucun joueur surveille',
             }
           )
@@ -166,7 +310,7 @@ discordClient.on('interactionCreate', async interaction => {
           maxPrice: maxPrice || null,
         });
         
-        await interaction.reply(slug + ' (' + rarity + ') ajoute a la watchlist !' + (maxPrice ? ' Alerte si < $' + maxPrice : ''));
+        await interaction.reply(slug + ' (' + rarity + ') ajoute a la watchlist !' + (maxPrice ? ' Alerte si < ' + maxPrice + 'E' : ''));
         break;
       }
       
@@ -190,7 +334,7 @@ discordClient.on('interactionCreate', async interaction => {
         const player = watchlist.players.find(p => p.slug === slug);
         if (player) {
           player.maxPrice = maxPrice;
-          await interaction.reply('Seuil de prix pour ' + player.name + ' defini a $' + maxPrice);
+          await interaction.reply('Seuil de prix pour ' + player.name + ' defini a ' + maxPrice + 'E');
         } else {
           await interaction.reply(slug + ' n est pas dans la watchlist. Utilise /addplayer d abord.');
         }
@@ -221,10 +365,211 @@ discordClient.on('interactionCreate', async interaction => {
         await interaction.followUp('Scan termine !');
         break;
       }
+
+      case 'prix': {
+        const joueurSlug = options.getString('joueur');
+        await interaction.deferReply();
+        
+        const player = watchlist.players.find(p => p.slug === joueurSlug);
+        if (!player) {
+          await interaction.editReply('Joueur non trouve dans la watchlist. Ajoute-le d\'abord avec /addplayer');
+          return;
+        }
+
+        const key = joueurSlug + '_' + player.rarity;
+        const history = priceHistory[key] || [];
+
+        if (history.length === 0) {
+          await interaction.editReply('Pas encore de donnees pour ' + player.name + '. Attends le prochain scan.');
+          return;
+        }
+
+        const latest = history[history.length - 1];
+        const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        const last7Days = history.filter(h => new Date(h.timestamp).getTime() > weekAgo);
+
+        let trend = 0;
+        let trendEmoji = '➡️';
+        if (last7Days.length > 1) {
+          const oldPrice = last7Days[0].price;
+          const newPrice = latest.price;
+          if (oldPrice && newPrice) {
+            trend = ((newPrice - oldPrice) / oldPrice) * 100;
+            trendEmoji = trend > 0 ? '📈' : trend < 0 ? '📉' : '➡️';
+          }
+        }
+
+        const prices = last7Days.map(h => h.price).filter(p => p !== null);
+        const min7d = prices.length > 0 ? Math.min(...prices) : null;
+        const max7d = prices.length > 0 ? Math.max(...prices) : null;
+
+        const embed = new EmbedBuilder()
+          .setTitle(trendEmoji + ' ' + player.name)
+          .setColor(trend > 0 ? 0xEF4444 : trend < 0 ? 0x22C55E : 0x6B7280)
+          .addFields(
+            { name: 'Prix actuel', value: latest.price ? latest.price + ' E' : 'N/A', inline: true },
+            { name: 'Tendance 7j', value: (trend > 0 ? '+' : '') + trend.toFixed(1) + '%', inline: true },
+            { name: 'Listings', value: (latest.nbListings || 0).toString(), inline: true },
+            { name: 'Min 7j', value: min7d ? min7d + ' E' : 'N/A', inline: true },
+            { name: 'Max 7j', value: max7d ? max7d + ' E' : 'N/A', inline: true },
+            { name: 'Rarete', value: player.rarity.toUpperCase(), inline: true },
+          )
+          .setFooter({ text: 'Derniere MAJ: ' + new Date(latest.timestamp).toLocaleString('fr-FR') });
+
+        await interaction.editReply({ embeds: [embed] });
+        break;
+      }
+
+      case 'historique': {
+        const joueurSlug = options.getString('joueur');
+        const periode = parseInt(options.getString('periode') || '30');
+        
+        await interaction.deferReply();
+        
+        const player = watchlist.players.find(p => p.slug === joueurSlug);
+        if (!player) {
+          await interaction.editReply('Joueur non trouve dans la watchlist.');
+          return;
+        }
+
+        const key = joueurSlug + '_' + player.rarity;
+        const history = priceHistory[key] || [];
+        const sales = salesHistory[key] || [];
+
+        const cutoff = Date.now() - periode * 24 * 60 * 60 * 1000;
+        const filteredHistory = history.filter(h => new Date(h.timestamp).getTime() > cutoff);
+        const filteredSales = sales.filter(s => new Date(s.date).getTime() > cutoff);
+
+        if (filteredHistory.length < 2 && filteredSales.length < 2) {
+          await interaction.editReply('Pas assez de donnees pour generer le graphique. Attends quelques scans.');
+          return;
+        }
+
+        // Générer l'URL du graphique avec QuickChart
+        const listingData = filteredHistory.map(h => ({
+          x: h.timestamp,
+          y: h.price
+        }));
+
+        const salesData = filteredSales.map(s => ({
+          x: s.date,
+          y: s.price
+        }));
+
+        const chartConfig = {
+          type: 'line',
+          data: {
+            datasets: [
+              {
+                label: 'Floor Price (Listings)',
+                data: listingData,
+                borderColor: '#F97316',
+                backgroundColor: 'rgba(249, 115, 22, 0.1)',
+                fill: true,
+                tension: 0.4,
+                pointRadius: 2,
+              },
+              {
+                label: 'Ventes',
+                data: salesData,
+                borderColor: '#8B5CF6',
+                backgroundColor: '#8B5CF6',
+                pointRadius: 6,
+                showLine: false,
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { labels: { color: '#fff' } },
+              title: {
+                display: true,
+                text: player.name + ' - ' + player.rarity.toUpperCase() + ' (' + periode + 'j)',
+                color: '#fff',
+                font: { size: 16 }
+              }
+            },
+            scales: {
+              x: {
+                type: 'time',
+                time: { unit: periode > 60 ? 'week' : 'day' },
+                ticks: { color: '#888' },
+                grid: { color: 'rgba(255,255,255,0.1)' }
+              },
+              y: {
+                ticks: { color: '#888' },
+                grid: { color: 'rgba(255,255,255,0.1)' }
+              }
+            }
+          }
+        };
+
+        const chartUrl = 'https://quickchart.io/chart?c=' + encodeURIComponent(JSON.stringify(chartConfig)) + '&backgroundColor=%231a1a2e&width=600&height=400';
+
+        const embed = new EmbedBuilder()
+          .setTitle('Historique - ' + player.name)
+          .setColor(0x7C3AED)
+          .setImage(chartUrl)
+          .setDescription('🟠 Courbe orange = Floor price des listings\n🟣 Points violets = Ventes realisees')
+          .setFooter({ text: 'Periode: ' + periode + ' jours' });
+
+        await interaction.editReply({ embeds: [embed] });
+        break;
+      }
+
+      case 'marche': {
+        await interaction.deferReply();
+        
+        const fields = [];
+        
+        for (const player of watchlist.players) {
+          const key = player.slug + '_' + player.rarity;
+          const history = priceHistory[key] || [];
+          
+          if (history.length > 0) {
+            const latest = history[history.length - 1];
+            let trend = 0;
+            if (history.length > 1) {
+              const prev = history[history.length - 2];
+              if (prev.price && latest.price) {
+                trend = ((latest.price - prev.price) / prev.price) * 100;
+              }
+            }
+            const trendEmoji = trend > 0 ? '📈' : trend < 0 ? '📉' : '➡️';
+            
+            fields.push({
+              name: trendEmoji + ' ' + player.name,
+              value: (latest.price || 'N/A') + ' E | ' + (latest.nbListings || 0) + ' listings',
+              inline: true,
+            });
+          } else {
+            fields.push({
+              name: '❓ ' + player.name,
+              value: 'Pas de donnees',
+              inline: true,
+            });
+          }
+        }
+
+        const embed = new EmbedBuilder()
+          .setTitle('Resume du Marche')
+          .setColor(0x7C3AED)
+          .addFields(fields.length > 0 ? fields : [{ name: 'Aucune donnee', value: 'Attends le prochain scan' }])
+          .setFooter({ text: 'MAJ: ' + new Date().toLocaleString('fr-FR') });
+
+        await interaction.editReply({ embeds: [embed] });
+        break;
+      }
     }
   } catch (error) {
     console.error('Erreur commande Discord:', error);
-    await interaction.reply('Une erreur est survenue').catch(() => {});
+    const reply = { content: 'Une erreur est survenue' };
+    if (interaction.deferred) {
+      await interaction.editReply(reply).catch(() => {});
+    } else {
+      await interaction.reply(reply).catch(() => {});
+    }
   }
 });
 
@@ -313,11 +658,11 @@ async function scrapePlayerListings(browser, playerSlug, rarity) {
         if (!cardSlug) return;
         
         const text = el.textContent || '';
-        const priceMatch = text.match(/[\$\u20ac]?\s*(\d+[.,]?\d*)\s*(\u20ac|\$|ETH)?/);
+        const priceMatch = text.match(/(\d+[\s,.]?\d*)\s*[E$]/i);
         
         let price = null;
         if (priceMatch) {
-          price = parseFloat(priceMatch[1].replace(',', '.'));
+          price = parseFloat(priceMatch[1].replace(/\s/g, '').replace(',', '.'));
         }
         
         if (cardSlug && !cards.find(c => c.slug === cardSlug)) {
@@ -372,11 +717,11 @@ async function scrapeClubListings(browser, clubSlug, rarity) {
         if (!cardSlug) return;
         
         const text = el.textContent || '';
-        const priceMatch = text.match(/(\d+[.,]?\d*)\s*(\u20ac|\$)/);
+        const priceMatch = text.match(/(\d+[\s,.]?\d*)\s*[E$]/i);
         
         let price = null;
         if (priceMatch) {
-          price = parseFloat(priceMatch[1].replace(',', '.'));
+          price = parseFloat(priceMatch[1].replace(/\s/g, '').replace(',', '.'));
         }
         
         const playerNameEl = el.querySelector('[class*="player"], [class*="Player"], [class*="name"], [class*="Name"]');
@@ -405,6 +750,70 @@ async function scrapeClubListings(browser, clubSlug, rarity) {
   }
 }
 
+async function scrapeSalesHistory(browser, playerSlug, rarity) {
+  const page = await browser.newPage();
+  
+  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+  
+  const url = 'https://sorare.com/fr/football/players/' + playerSlug + '/cards/sales-history';
+  
+  try {
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    await sleep(3000);
+    
+    const sales = await page.evaluate((targetRarity) => {
+      const salesData = [];
+      
+      document.querySelectorAll('tr').forEach(row => {
+        const text = row.textContent || '';
+        
+        // Filtrer par rarete
+        if (targetRarity === 'super_rare' && !text.toLowerCase().includes('super rare')) return;
+        if (targetRarity === 'rare' && !text.toLowerCase().includes('rare') && text.toLowerCase().includes('super')) return;
+        if (targetRarity === 'unique' && !text.toLowerCase().includes('unique')) return;
+        
+        const priceMatch = text.match(/(\d+[\s,.]?\d*)\s*[E$]/i);
+        if (!priceMatch) return;
+        
+        const price = parseFloat(priceMatch[1].replace(/\s/g, '').replace(',', '.'));
+        
+        let type = 'unknown';
+        if (text.includes('Enchere')) type = 'auction';
+        if (text.includes('Achat immediat') || text.includes('Buy now')) type = 'buy_now';
+        if (text.includes('Trade')) type = 'trade';
+        if (text.includes('Offre directe')) type = 'direct_offer';
+        
+        const dateMatch = text.match(/il y a (\d+) (jour|semaine|mois|an)/i);
+        let date = new Date();
+        if (dateMatch) {
+          const amount = parseInt(dateMatch[1]);
+          const unit = dateMatch[2].toLowerCase();
+          if (unit.includes('jour')) date.setDate(date.getDate() - amount);
+          if (unit.includes('semaine')) date.setDate(date.getDate() - amount * 7);
+          if (unit.includes('mois')) date.setMonth(date.getMonth() - amount);
+          if (unit.includes('an')) date.setFullYear(date.getFullYear() - amount);
+        }
+        
+        salesData.push({
+          price,
+          type,
+          date: date.toISOString(),
+        });
+      });
+      
+      return salesData;
+    }, rarity);
+    
+    await page.close();
+    return sales;
+    
+  } catch (error) {
+    console.error('Erreur scraping historique ' + playerSlug + ':', error.message);
+    await page.close();
+    return [];
+  }
+}
+
 // ============================================================
 //                    LOGIQUE DE SCAN
 // ============================================================
@@ -415,6 +824,12 @@ async function scanMarket() {
   stats.totalScans++;
   
   let browser;
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('fr-FR');
+  const timeStr = now.toLocaleTimeString('fr-FR');
+  const timestamp = now.toISOString();
+  
+  const priceTimelineRows = [];
   
   try {
     browser = await createBrowser();
@@ -439,7 +854,7 @@ async function scanMarket() {
             .setDescription((listing.playerName || 'Carte') + ' - ' + club.name)
             .setColor(club.maxPrice ? 0x00FF00 : 0x7C3AED)
             .addFields(
-              { name: 'Prix', value: listing.price ? '$' + listing.price : 'N/A', inline: true },
+              { name: 'Prix', value: listing.price ? listing.price + ' E' : 'N/A', inline: true },
               { name: 'Rarete', value: club.rarity.toUpperCase(), inline: true },
               { name: 'Club', value: club.name, inline: true },
             )
@@ -448,7 +863,7 @@ async function scanMarket() {
             .setFooter({ text: 'Sorare Alert Bot' });
           
           if (club.maxPrice) {
-            embed.addFields({ name: 'Ton seuil', value: '$' + club.maxPrice, inline: true });
+            embed.addFields({ name: 'Ton seuil', value: club.maxPrice + ' E', inline: true });
           }
           
           await sendDiscordAlert(embed);
@@ -465,6 +880,31 @@ async function scanMarket() {
       const listings = await scrapePlayerListings(browser, player.slug, player.rarity);
       console.log('  -> ' + listings.length + ' listings trouves');
       
+      // Calculer les stats de prix
+      const prices = listings.map(l => l.price).filter(p => p !== null);
+      const minPrice = prices.length > 0 ? Math.min(...prices) : null;
+      const sortedPrices = [...prices].sort((a, b) => a - b);
+      const medianPrice = sortedPrices.length > 0 ? sortedPrices[Math.floor(sortedPrices.length / 2)] : null;
+      
+      // Sauvegarder dans l'historique en memoire
+      const key = player.slug + '_' + player.rarity;
+      if (!priceHistory[key]) priceHistory[key] = [];
+      priceHistory[key].push({
+        timestamp,
+        price: minPrice,
+        median: medianPrice,
+        nbListings: listings.length,
+      });
+      
+      // Garder seulement les 30 derniers jours en memoire
+      const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      priceHistory[key] = priceHistory[key].filter(h => new Date(h.timestamp).getTime() > cutoff);
+      
+      // Preparer pour Google Sheets
+      if (listings.length > 0) {
+        priceTimelineRows.push([timestamp, player.name, player.slug, player.rarity, minPrice, medianPrice, listings.length]);
+      }
+      
       for (const listing of listings) {
         const listingId = 'player-' + listing.slug;
         
@@ -479,7 +919,7 @@ async function scanMarket() {
             .setDescription(player.name)
             .setColor(player.maxPrice ? 0x00FF00 : 0x3B82F6)
             .addFields(
-              { name: 'Prix', value: listing.price ? '$' + listing.price : 'N/A', inline: true },
+              { name: 'Prix', value: listing.price ? listing.price + ' E' : 'N/A', inline: true },
               { name: 'Rarete', value: player.rarity.toUpperCase(), inline: true },
             )
             .setURL(listing.url)
@@ -488,17 +928,23 @@ async function scanMarket() {
           
           if (player.maxPrice) {
             embed.addFields(
-              { name: 'Ton seuil', value: '$' + player.maxPrice, inline: true },
-              { name: 'Economie', value: '$' + (player.maxPrice - listing.price).toFixed(2), inline: true },
+              { name: 'Ton seuil', value: player.maxPrice + ' E', inline: true },
+              { name: 'Economie', value: (player.maxPrice - listing.price).toFixed(2) + ' E', inline: true },
             );
           }
           
           await sendDiscordAlert(embed);
-          console.log('  Alerte envoyee: ' + player.name + ' a $' + listing.price);
+          console.log('  Alerte envoyee: ' + player.name + ' a ' + listing.price + ' E');
         }
       }
       
       await sleep(2000);
+    }
+    
+    // Ecrire dans Google Sheets
+    if (sheetsClient && priceTimelineRows.length > 0) {
+      await appendToSheet('Prix_Timeline', priceTimelineRows);
+      console.log('  Google Sheets mis a jour');
     }
     
     console.log('Scan termine. ' + seenListings.size + ' listings en memoire.');
@@ -506,6 +952,61 @@ async function scanMarket() {
   } catch (error) {
     console.error('Erreur scan:', error.message);
     stats.errors++;
+  } finally {
+    if (browser) await browser.close();
+  }
+}
+
+async function scanSalesHistory() {
+  console.log('Scan historique des ventes...');
+  
+  let browser;
+  const salesRows = [];
+  
+  try {
+    browser = await createBrowser();
+    
+    for (const player of watchlist.players) {
+      console.log('Historique: ' + player.name);
+      
+      const sales = await scrapeSalesHistory(browser, player.slug, player.rarity);
+      console.log('  -> ' + sales.length + ' ventes trouvees');
+      
+      const key = player.slug + '_' + player.rarity;
+      if (!salesHistory[key]) salesHistory[key] = [];
+      
+      for (const sale of sales) {
+        const exists = salesHistory[key].find(s => 
+          s.date === sale.date && s.price === sale.price
+        );
+        
+        if (!exists) {
+          salesHistory[key].push(sale);
+          salesRows.push([
+            new Date(sale.date).toLocaleDateString('fr-FR'),
+            player.name,
+            player.slug,
+            player.rarity,
+            '',
+            '',
+            sale.price,
+            sale.type,
+            '',
+            '',
+          ]);
+        }
+      }
+      
+      await sleep(3000);
+    }
+    
+    if (sheetsClient && salesRows.length > 0) {
+      await appendToSheet('Ventes', salesRows);
+      console.log('Historique ventes sauvegarde');
+    }
+    
+  } catch (error) {
+    console.error('Erreur scan historique:', error.message);
   } finally {
     if (browser) await browser.close();
   }
@@ -536,361 +1037,60 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-// ============================================================
-//                    DASHBOARD HTML
-// ============================================================
+app.get('/api/prices/:slug', (req, res) => {
+  const slug = req.params.slug;
+  const player = watchlist.players.find(p => p.slug === slug);
+  
+  if (!player) {
+    return res.status(404).json({ error: 'Joueur non trouve' });
+  }
+  
+  const key = slug + '_' + player.rarity;
+  const history = priceHistory[key] || [];
+  
+  res.json({
+    player: player.name,
+    rarity: player.rarity,
+    history: history,
+  });
+});
 
+// Dashboard HTML
 app.get('/', (req, res) => {
-  res.send(`<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sorare Alert Bot - Dashboard</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-      min-height: 100vh;
-      color: #fff;
-      padding: 20px;
-    }
-    .container { max-width: 1000px; margin: 0 auto; }
-    header { text-align: center; margin-bottom: 30px; }
-    header h1 { font-size: 2rem; margin-bottom: 10px; }
-    header h1 span { color: #7c3aed; }
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 15px;
-      margin-bottom: 30px;
-    }
-    .stat-card {
-      background: rgba(255,255,255,0.1);
-      border-radius: 12px;
-      padding: 20px;
-      text-align: center;
-    }
-    .stat-card .value { font-size: 2rem; font-weight: bold; color: #7c3aed; }
-    .stat-card .label { font-size: 0.85rem; color: #aaa; margin-top: 5px; }
-    .section {
-      background: rgba(255,255,255,0.05);
-      border-radius: 16px;
-      padding: 25px;
-      margin-bottom: 25px;
-    }
-    .section h2 { font-size: 1.3rem; margin-bottom: 20px; }
-    .add-form {
-      display: grid;
-      grid-template-columns: 2fr 1fr 1fr auto;
-      gap: 10px;
-      margin-bottom: 20px;
-    }
-    @media (max-width: 600px) { .add-form { grid-template-columns: 1fr; } }
-    input, select, button {
-      padding: 12px 16px;
-      border-radius: 8px;
-      border: none;
-      font-size: 1rem;
-    }
-    input, select { background: rgba(255,255,255,0.1); color: #fff; }
-    input::placeholder { color: #888; }
-    input:focus, select:focus { outline: 2px solid #7c3aed; }
-    button {
-      background: #7c3aed;
-      color: #fff;
-      cursor: pointer;
-      font-weight: 600;
-      transition: all 0.2s;
-    }
-    button:hover { background: #6d28d9; }
-    button.danger { background: #dc2626; }
-    button.danger:hover { background: #b91c1c; }
-    .player-list { display: flex; flex-direction: column; gap: 10px; }
-    .player-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      background: rgba(255,255,255,0.08);
-      padding: 15px 20px;
-      border-radius: 10px;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-    .player-info { display: flex; align-items: center; gap: 15px; flex: 1; }
-    .player-name { font-weight: 600; font-size: 1.1rem; }
-    .player-rarity {
-      background: #7c3aed;
-      padding: 4px 10px;
-      border-radius: 20px;
-      font-size: 0.75rem;
-      text-transform: uppercase;
-    }
-    .player-rarity.unique { background: #eab308; color: #000; }
-    .player-rarity.rare { background: #3b82f6; }
-    .player-actions { display: flex; align-items: center; gap: 10px; }
-    .price-input { width: 100px; text-align: center; }
-    .btn-small { padding: 8px 12px; font-size: 0.85rem; }
-    .empty-state { text-align: center; padding: 40px; color: #888; }
-    .toast {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      background: #22c55e;
-      color: #fff;
-      padding: 15px 25px;
-      border-radius: 10px;
-      font-weight: 600;
-      transform: translateY(100px);
-      opacity: 0;
-      transition: all 0.3s;
-    }
-    .toast.show { transform: translateY(0); opacity: 1; }
-    .toast.error { background: #dc2626; }
-    .scan-btn { width: 100%; padding: 15px; font-size: 1.1rem; margin-top: 10px; }
-    .last-scan { text-align: center; color: #888; font-size: 0.9rem; margin-top: 15px; }
-    .club-item { border-left: 4px solid #eab308; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <header>
-      <h1>Sorare <span>Alert Bot</span></h1>
-      <p>Dashboard de gestion des alertes</p>
-    </header>
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="value" id="stat-players">-</div>
-        <div class="label">Joueurs suivis</div>
-      </div>
-      <div class="stat-card">
-        <div class="value" id="stat-clubs">-</div>
-        <div class="label">Clubs suivis</div>
-      </div>
-      <div class="stat-card">
-        <div class="value" id="stat-scans">-</div>
-        <div class="label">Scans totaux</div>
-      </div>
-      <div class="stat-card">
-        <div class="value" id="stat-alerts">-</div>
-        <div class="label">Alertes envoyees</div>
-      </div>
-    </div>
-    <div class="section">
-      <h2>Joueurs surveilles</h2>
-      <div class="add-form">
-        <input type="text" id="player-slug" placeholder="Slug du joueur (ex: bradley-barcola)">
-        <select id="player-rarity">
-          <option value="super_rare">Super Rare</option>
-          <option value="rare">Rare</option>
-          <option value="unique">Unique</option>
-        </select>
-        <input type="number" id="player-maxprice" placeholder="Prix max $">
-        <button onclick="addPlayer()">Ajouter</button>
-      </div>
-      <div class="player-list" id="player-list">
-        <div class="empty-state">Chargement...</div>
-      </div>
-    </div>
-    <div class="section">
-      <h2>Clubs surveilles</h2>
-      <div class="add-form">
-        <input type="text" id="club-slug" placeholder="Slug du club (ex: toulouse-toulouse)">
-        <select id="club-rarity">
-          <option value="unique">Unique</option>
-          <option value="super_rare">Super Rare</option>
-          <option value="rare">Rare</option>
-        </select>
-        <input type="number" id="club-maxprice" placeholder="Prix max $">
-        <button onclick="addClub()">Ajouter</button>
-      </div>
-      <div class="player-list" id="club-list">
-        <div class="empty-state">Chargement...</div>
-      </div>
-    </div>
-    <div class="section">
-      <h2>Actions</h2>
-      <button class="scan-btn" onclick="triggerScan()">Lancer un scan maintenant</button>
-      <p class="last-scan" id="last-scan">Dernier scan : -</p>
-    </div>
-  </div>
-  <div class="toast" id="toast"></div>
-  <script>
-    async function loadData() {
-      try {
-        var statusRes = await fetch("/api/status");
-        var watchlistRes = await fetch("/watchlist");
-        var status = await statusRes.json();
-        var wl = await watchlistRes.json();
-        document.getElementById("stat-players").textContent = wl.players ? wl.players.length : 0;
-        document.getElementById("stat-clubs").textContent = wl.clubs ? wl.clubs.length : 0;
-        document.getElementById("stat-scans").textContent = status.totalScans || 0;
-        document.getElementById("stat-alerts").textContent = status.alertsSent || 0;
-        if (status.lastScan) {
-          var date = new Date(status.lastScan);
-          document.getElementById("last-scan").textContent = "Dernier scan : " + date.toLocaleString("fr-FR");
-        }
-        renderPlayers(wl.players || []);
-        renderClubs(wl.clubs || []);
-      } catch (err) {
-        console.error("Erreur chargement:", err);
-        showToast("Erreur de chargement", true);
-      }
-    }
+  const playersHtml = watchlist.players.map(p => {
+    const key = p.slug + '_' + p.rarity;
+    const history = priceHistory[key] || [];
+    const latest = history.length > 0 ? history[history.length - 1] : null;
     
-    function renderPlayers(players) {
-      var container = document.getElementById("player-list");
-      if (players.length === 0) {
-        container.innerHTML = '<div class="empty-state">Aucun joueur surveille</div>';
-        return;
-      }
-      var html = "";
-      for (var i = 0; i < players.length; i++) {
-        var p = players[i];
-        html += '<div class="player-item">';
-        html += '<div class="player-info">';
-        html += '<span class="player-name">' + p.name + '</span>';
-        html += '<span class="player-rarity ' + p.rarity + '">' + p.rarity.replace("_", " ") + '</span>';
-        html += '</div>';
-        html += '<div class="player-actions">';
-        html += '<input type="number" class="price-input" data-slug="' + p.slug + '" value="' + (p.maxPrice || "") + '" placeholder="Max $">';
-        html += '<button class="btn-small danger" data-slug="' + p.slug + '" onclick="removePlayer(this.dataset.slug)">X</button>';
-        html += '</div></div>';
-      }
-      container.innerHTML = html;
-      container.querySelectorAll(".price-input").forEach(function(input) {
-        input.addEventListener("change", function() {
-          updatePrice(this.dataset.slug, this.value);
-        });
-      });
-    }
-    
-    function renderClubs(clubs) {
-      var container = document.getElementById("club-list");
-      if (clubs.length === 0) {
-        container.innerHTML = '<div class="empty-state">Aucun club surveille</div>';
-        return;
-      }
-      var html = "";
-      for (var i = 0; i < clubs.length; i++) {
-        var c = clubs[i];
-        html += '<div class="player-item club-item">';
-        html += '<div class="player-info">';
-        html += '<span class="player-name">' + c.name + '</span>';
-        html += '<span class="player-rarity ' + c.rarity + '">' + c.rarity.replace("_", " ") + '</span>';
-        html += '</div>';
-        html += '<div class="player-actions">';
-        html += '<input type="number" class="price-input" data-slug="' + c.slug + '" value="' + (c.maxPrice || "") + '" placeholder="Max $">';
-        html += '<button class="btn-small danger" data-slug="' + c.slug + '" onclick="removeClub(this.dataset.slug)">X</button>';
-        html += '</div></div>';
-      }
-      container.innerHTML = html;
-      container.querySelectorAll(".price-input").forEach(function(input) {
-        input.addEventListener("change", function() {
-          updateClubPrice(this.dataset.slug, this.value);
-        });
-      });
-    }
-    
-    async function addPlayer() {
-      var slug = document.getElementById("player-slug").value.trim();
-      var rarity = document.getElementById("player-rarity").value;
-      var maxPrice = document.getElementById("player-maxprice").value;
-      if (!slug) { showToast("Entre un slug de joueur", true); return; }
-      try {
-        var res = await fetch("/watchlist/player", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ slug: slug, rarity: rarity, maxPrice: maxPrice ? parseFloat(maxPrice) : null })
-        });
-        if (res.ok) {
-          showToast("Joueur ajoute !");
-          document.getElementById("player-slug").value = "";
-          document.getElementById("player-maxprice").value = "";
-          loadData();
-        } else { showToast("Erreur ajout", true); }
-      } catch (err) { showToast("Erreur reseau", true); }
-    }
-    
-    async function addClub() {
-      var slug = document.getElementById("club-slug").value.trim();
-      var rarity = document.getElementById("club-rarity").value;
-      var maxPrice = document.getElementById("club-maxprice").value;
-      if (!slug) { showToast("Entre un slug de club", true); return; }
-      try {
-        var res = await fetch("/watchlist/club", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ slug: slug, rarity: rarity, maxPrice: maxPrice ? parseFloat(maxPrice) : null })
-        });
-        if (res.ok) {
-          showToast("Club ajoute !");
-          document.getElementById("club-slug").value = "";
-          document.getElementById("club-maxprice").value = "";
-          loadData();
-        } else { showToast("Erreur ajout", true); }
-      } catch (err) { showToast("Erreur reseau", true); }
-    }
-    
-    async function removePlayer(slug) {
-      if (!confirm("Supprimer ce joueur de la watchlist ?")) return;
-      try {
-        var res = await fetch("/watchlist/player/" + slug, { method: "DELETE" });
-        if (res.ok) { showToast("Joueur supprime"); loadData(); }
-      } catch (err) { showToast("Erreur suppression", true); }
-    }
-    
-    async function removeClub(slug) {
-      if (!confirm("Supprimer ce club de la watchlist ?")) return;
-      try {
-        var res = await fetch("/watchlist/club/" + slug, { method: "DELETE" });
-        if (res.ok) { showToast("Club supprime"); loadData(); }
-      } catch (err) { showToast("Erreur suppression", true); }
-    }
-    
-    async function updatePrice(slug, price) {
-      try {
-        var res = await fetch("/watchlist/player/" + slug + "/price", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ maxPrice: price ? parseFloat(price) : null })
-        });
-        if (res.ok) { showToast("Prix mis a jour"); }
-      } catch (err) { showToast("Erreur mise a jour", true); }
-    }
-    
-    async function updateClubPrice(slug, price) {
-      try {
-        var res = await fetch("/watchlist/club/" + slug + "/price", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ maxPrice: price ? parseFloat(price) : null })
-        });
-        if (res.ok) { showToast("Prix mis a jour"); }
-      } catch (err) { showToast("Erreur mise a jour", true); }
-    }
-    
-    async function triggerScan() {
-      showToast("Scan en cours...");
-      try {
-        await fetch("/scan", { method: "POST" });
-        setTimeout(loadData, 3000);
-      } catch (err) { showToast("Erreur scan", true); }
-    }
-    
-    function showToast(message, isError) {
-      var toast = document.getElementById("toast");
-      toast.textContent = message;
-      toast.className = "toast show" + (isError ? " error" : "");
-      setTimeout(function() { toast.className = "toast"; }, 3000);
-    }
-    
-    loadData();
-    setInterval(loadData, 30000);
-  </script>
-</body>
-</html>`);
+    return '<div class="player-item">' +
+      '<div class="player-info">' +
+        '<span class="player-name">' + p.name + '</span>' +
+        '<span class="player-rarity ' + p.rarity + '">' + p.rarity.replace('_', ' ') + '</span>' +
+        (latest && latest.price ? '<span class="current-price">' + latest.price + ' E</span>' : '') +
+      '</div>' +
+      '<div class="player-actions">' +
+        '<input type="number" class="price-input" data-slug="' + p.slug + '" data-type="player" value="' + (p.maxPrice || '') + '" placeholder="Max E">' +
+        '<button class="btn-small danger" data-slug="' + p.slug + '" data-type="player">X</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  const clubsHtml = watchlist.clubs.map(c => {
+    return '<div class="player-item club-item">' +
+      '<div class="player-info">' +
+        '<span class="player-name">' + c.name + '</span>' +
+        '<span class="player-rarity ' + c.rarity + '">' + c.rarity.replace('_', ' ') + '</span>' +
+      '</div>' +
+      '<div class="player-actions">' +
+        '<input type="number" class="price-input" data-slug="' + c.slug + '" data-type="club" value="' + (c.maxPrice || '') + '" placeholder="Max E">' +
+        '<button class="btn-small danger" data-slug="' + c.slug + '" data-type="club">X</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  const html = '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Sorare Alert Bot</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);min-height:100vh;color:#fff;padding:20px}.container{max-width:1000px;margin:0 auto}header{text-align:center;margin-bottom:30px}header h1{font-size:2rem;margin-bottom:10px}header h1 span{color:#7c3aed}.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;margin-bottom:30px}.stat-card{background:rgba(255,255,255,0.1);border-radius:12px;padding:20px;text-align:center}.stat-card .value{font-size:2rem;font-weight:bold;color:#7c3aed}.stat-card .label{font-size:0.85rem;color:#aaa;margin-top:5px}.section{background:rgba(255,255,255,0.05);border-radius:16px;padding:25px;margin-bottom:25px}.section h2{font-size:1.3rem;margin-bottom:20px}.add-form{display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:10px;margin-bottom:20px}@media(max-width:600px){.add-form{grid-template-columns:1fr}}input,select,button{padding:12px 16px;border-radius:8px;border:none;font-size:1rem}input,select{background:rgba(255,255,255,0.1);color:#fff}input::placeholder{color:#888}input:focus,select:focus{outline:2px solid #7c3aed}button{background:#7c3aed;color:#fff;cursor:pointer;font-weight:600;transition:all 0.2s}button:hover{background:#6d28d9}button.danger{background:#dc2626}button.danger:hover{background:#b91c1c}.player-list{display:flex;flex-direction:column;gap:10px}.player-item{display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.08);padding:15px 20px;border-radius:10px;flex-wrap:wrap;gap:10px}.player-info{display:flex;align-items:center;gap:15px;flex:1}.player-name{font-weight:600;font-size:1.1rem}.player-rarity{background:#7c3aed;padding:4px 10px;border-radius:20px;font-size:0.75rem;text-transform:uppercase}.player-rarity.unique{background:#eab308;color:#000}.player-rarity.rare{background:#3b82f6}.current-price{color:#22c55e;font-weight:bold;margin-left:10px}.player-actions{display:flex;align-items:center;gap:10px}.price-input{width:100px;text-align:center}.btn-small{padding:8px 12px;font-size:0.85rem}.empty-state{text-align:center;padding:40px;color:#888}.toast{position:fixed;bottom:20px;right:20px;background:#22c55e;color:#fff;padding:15px 25px;border-radius:10px;font-weight:600;transform:translateY(100px);opacity:0;transition:all 0.3s}.toast.show{transform:translateY(0);opacity:1}.toast.error{background:#dc2626}.scan-btn{width:100%;padding:15px;font-size:1.1rem;margin-top:10px}.last-scan{text-align:center;color:#888;font-size:0.9rem;margin-top:15px}.club-item{border-left:4px solid #eab308}.sheets-link{display:inline-block;margin-top:10px;color:#7c3aed;text-decoration:none}.sheets-link:hover{text-decoration:underline}</style></head><body><div class="container"><header><h1>Sorare <span>Alert Bot</span></h1><p>Dashboard de gestion des alertes</p><a class="sheets-link" href="https://docs.google.com/spreadsheets/d/' + config.GOOGLE_SHEET_ID + '" target="_blank">Voir Google Sheets</a></header><div class="stats-grid"><div class="stat-card"><div class="value">' + watchlist.players.length + '</div><div class="label">Joueurs suivis</div></div><div class="stat-card"><div class="value">' + watchlist.clubs.length + '</div><div class="label">Clubs suivis</div></div><div class="stat-card"><div class="value">' + stats.totalScans + '</div><div class="label">Scans totaux</div></div><div class="stat-card"><div class="value">' + stats.alertsSent + '</div><div class="label">Alertes envoyees</div></div></div><div class="section"><h2>Joueurs surveilles</h2><div class="add-form"><input type="text" id="player-slug" placeholder="Slug du joueur (ex: bradley-barcola)"><select id="player-rarity"><option value="super_rare">Super Rare</option><option value="rare">Rare</option><option value="unique">Unique</option></select><input type="number" id="player-maxprice" placeholder="Prix max E"><button id="add-player-btn">Ajouter</button></div><div class="player-list" id="player-list">' + (playersHtml || '<div class="empty-state">Aucun joueur surveille</div>') + '</div></div><div class="section"><h2>Clubs surveilles</h2><div class="add-form"><input type="text" id="club-slug" placeholder="Slug du club (ex: toulouse-toulouse)"><select id="club-rarity"><option value="unique">Unique</option><option value="super_rare">Super Rare</option><option value="rare">Rare</option></select><input type="number" id="club-maxprice" placeholder="Prix max E"><button id="add-club-btn">Ajouter</button></div><div class="player-list" id="club-list">' + (clubsHtml || '<div class="empty-state">Aucun club surveille</div>') + '</div></div><div class="section"><h2>Actions</h2><button class="scan-btn" id="scan-btn">Lancer un scan maintenant</button><p class="last-scan" id="last-scan">Dernier scan : ' + (stats.lastScan ? new Date(stats.lastScan).toLocaleString('fr-FR') : '-') + '</p></div></div><div class="toast" id="toast"></div><script>function showToast(m,e){var t=document.getElementById("toast");t.textContent=m;t.className="toast show"+(e?" error":"");setTimeout(function(){t.className="toast"},3000)}document.getElementById("add-player-btn").addEventListener("click",function(){var s=document.getElementById("player-slug").value.trim();var r=document.getElementById("player-rarity").value;var p=document.getElementById("player-maxprice").value;if(!s){showToast("Entre un slug",true);return}fetch("/watchlist/player",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({slug:s,rarity:r,maxPrice:p?parseFloat(p):null})}).then(function(res){if(res.ok){showToast("Joueur ajoute!");location.reload()}else{showToast("Erreur",true)}})});document.getElementById("add-club-btn").addEventListener("click",function(){var s=document.getElementById("club-slug").value.trim();var r=document.getElementById("club-rarity").value;var p=document.getElementById("club-maxprice").value;if(!s){showToast("Entre un slug",true);return}fetch("/watchlist/club",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({slug:s,rarity:r,maxPrice:p?parseFloat(p):null})}).then(function(res){if(res.ok){showToast("Club ajoute!");location.reload()}else{showToast("Erreur",true)}})});document.getElementById("scan-btn").addEventListener("click",function(){showToast("Scan en cours...");fetch("/scan",{method:"POST"}).then(function(){setTimeout(function(){location.reload()},5000)})});document.querySelectorAll(".btn-small.danger").forEach(function(btn){btn.addEventListener("click",function(){var s=this.dataset.slug;var t=this.dataset.type;if(!confirm("Supprimer?")){return}fetch("/watchlist/"+t+"/"+s,{method:"DELETE"}).then(function(res){if(res.ok){showToast("Supprime");location.reload()}})})});document.querySelectorAll(".price-input").forEach(function(input){input.addEventListener("change",function(){var s=this.dataset.slug;var t=this.dataset.type;var p=this.value;fetch("/watchlist/"+t+"/"+s+"/price",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({maxPrice:p?parseFloat(p):null})}).then(function(res){if(res.ok){showToast("Prix mis a jour")}})})})</script></body></html>';
+
+  res.send(html);
 });
 
 // API watchlist
@@ -928,7 +1128,7 @@ app.put('/watchlist/player/:slug/price', (req, res) => {
   
   if (player) {
     player.maxPrice = maxPrice;
-    console.log('Prix mis a jour: ' + player.name + ' -> $' + maxPrice);
+    console.log('Prix mis a jour: ' + player.name + ' -> ' + maxPrice + ' E');
     res.json({ success: true, player });
   } else {
     res.status(404).json({ error: 'Joueur non trouve' });
@@ -967,7 +1167,7 @@ app.put('/watchlist/club/:slug/price', (req, res) => {
   
   if (club) {
     club.maxPrice = maxPrice;
-    console.log('Prix club mis a jour: ' + club.name + ' -> $' + maxPrice);
+    console.log('Prix club mis a jour: ' + club.name + ' -> ' + maxPrice + ' E');
     res.json({ success: true, club });
   } else {
     res.status(404).json({ error: 'Club non trouve' });
@@ -986,13 +1186,17 @@ app.post('/scan', async (req, res) => {
 async function start() {
   console.log('========================================');
   console.log('  SORARE PRICE ALERT BOT');
+  console.log('  Avec tracking des prix');
   console.log('========================================');
   console.log('Clubs surveilles    : ' + watchlist.clubs.length);
   console.log('Joueurs surveilles  : ' + watchlist.players.length);
   console.log('Intervalle scan     : ' + (config.SCAN_INTERVAL_MS / 1000 / 60) + ' minutes');
   console.log('Proxy NordVPN       : ' + (config.NORDVPN_USER ? 'Active' : 'Non configure'));
   console.log('Discord             : ' + (config.DISCORD_TOKEN ? 'Configure' : 'Non configure'));
+  console.log('Google Sheets       : ' + (config.GOOGLE_CREDENTIALS ? 'Configure' : 'Non configure'));
   console.log('========================================');
+  
+  await initGoogleSheets();
   
   app.listen(config.PORT, () => {
     console.log('Serveur demarre sur le port ' + config.PORT);
@@ -1006,6 +1210,10 @@ async function start() {
   
   setTimeout(scanMarket, 10000);
   setInterval(scanMarket, config.SCAN_INTERVAL_MS);
+  
+  // Scan historique des ventes toutes les 6 heures
+  setTimeout(scanSalesHistory, 60000);
+  setInterval(scanSalesHistory, 6 * 60 * 60 * 1000);
 }
 
 start().catch(console.error);
