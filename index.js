@@ -726,109 +726,111 @@ async function scrapePlayerListings(browser, playerSlug, rarity) {
   await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
   await page.setViewport({ width: 1400, height: 900 });
   
+  // Intercepter les reponses API pour capturer les prix
+  const apiPrices = [];
+  
+  page.on('response', async (response) => {
+    const url = response.url();
+    if (url.includes('graphql') || url.includes('api.sorare')) {
+      try {
+        const text = await response.text();
+        // Chercher les prix dans les reponses JSON
+        const eurMatches = text.match(/"eur"\s*:\s*(\d+(?:\.\d+)?)/g) || [];
+        const priceMatches = text.match(/"price"\s*:\s*"?(\d+(?:\.\d+)?)"?/g) || [];
+        
+        eurMatches.forEach(m => {
+          const price = parseFloat(m.match(/(\d+(?:\.\d+)?)/)[1]);
+          if (price > 10 && price < 50000) {
+            apiPrices.push(price);
+          }
+        });
+        
+        priceMatches.forEach(m => {
+          const price = parseFloat(m.match(/(\d+(?:\.\d+)?)/)[1]);
+          // Prix en wei? Convertir
+          if (price > 1e15) {
+            apiPrices.push(price / 1e18 * 2500); // Approximation ETH -> EUR
+          } else if (price > 10 && price < 50000) {
+            apiPrices.push(price);
+          }
+        });
+      } catch (e) {
+        // Ignorer les erreurs de parsing
+      }
+    }
+  });
+  
   const url = 'https://sorare.com/fr/football/players/' + playerSlug + '/cards?s=Lowest+Price&rarity=' + rarity + '&sale=true';
   
   try {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-    await sleep(4000);
+    await sleep(5000); // Attendre que les donnees chargent
     
-    // Extraire les prix directement du HTML avec plusieurs methodes
-    const listings = await page.evaluate(() => {
+    // Scroll pour declencher le chargement
+    await page.evaluate(() => window.scrollTo(0, 500));
+    await sleep(2000);
+    
+    // Extraire les prix du DOM
+    const domData = await page.evaluate(() => {
       const cards = [];
-      const seenPrices = new Set();
+      const prices = [];
       
-      // Methode 1: Chercher les liens vers les cartes
+      // Chercher les cartes
       document.querySelectorAll('a[href*="/cards/"]').forEach(el => {
         const href = el.getAttribute('href');
         if (!href || !href.includes('/cards/')) return;
         
         const cardSlug = href.split('/cards/')[1]?.split('?')[0];
-        if (!cardSlug) return;
+        if (!cardSlug || cards.find(c => c.slug === cardSlug)) return;
         
-        // Chercher le prix dans l'element ou ses parents
-        let text = el.textContent || '';
-        let parent = el.parentElement;
-        for (let i = 0; i < 5 && parent; i++) {
-          text += ' ' + (parent.textContent || '');
-          parent = parent.parentElement;
-        }
-        
-        // Patterns de prix: "123,45 €" ou "123.45 €" ou "€123.45" ou "123 €"
-        const pricePatterns = [
-          /(\d{1,3}(?:[\s,]\d{3})*(?:[,.]\d{1,2})?)\s*€/,
-          /€\s*(\d{1,3}(?:[\s,]\d{3})*(?:[,.]\d{1,2})?)/,
-          /(\d+(?:[,.]\d{1,2})?)\s*EUR/i,
-        ];
-        
-        let price = null;
-        for (const pattern of pricePatterns) {
-          const match = text.match(pattern);
-          if (match) {
-            let priceStr = match[1].replace(/\s/g, '').replace(',', '.');
-            price = parseFloat(priceStr);
-            if (!isNaN(price) && price > 0) break;
-          }
-        }
-        
-        if (cardSlug && !cards.find(c => c.slug === cardSlug)) {
-          cards.push({
-            slug: cardSlug,
-            price: price,
-            url: 'https://sorare.com' + href,
-          });
-        }
+        cards.push({
+          slug: cardSlug,
+          url: 'https://sorare.com' + href,
+        });
       });
       
-      // Methode 2: Chercher tous les elements avec des prix
-      if (cards.every(c => c.price === null)) {
-        const allText = document.body.innerText;
-        const priceMatches = allText.match(/(\d{1,3}(?:[\s,]\d{3})*(?:[,.]\d{1,2})?)\s*€/g) || [];
-        
-        priceMatches.forEach((match, i) => {
-          const priceStr = match.replace(/[€\s]/g, '').replace(',', '.');
+      // Chercher TOUS les prix sur la page
+      const walker = document.createTreeWalker(
+        document.body,
+        NodeFilter.SHOW_TEXT,
+        null,
+        false
+      );
+      
+      while (walker.nextNode()) {
+        const text = walker.currentNode.textContent;
+        // Format: "123,45 €" ou "123.45 €"
+        const match = text.match(/(\d{1,3}(?:[\s,]\d{3})*(?:[,.]\d{1,2})?)\s*€/);
+        if (match) {
+          const priceStr = match[1].replace(/[\s]/g, '').replace(',', '.');
           const price = parseFloat(priceStr);
-          if (!isNaN(price) && price > 10 && price < 50000 && !seenPrices.has(price)) {
-            seenPrices.add(price);
-            if (cards[i]) {
-              cards[i].price = price;
-            }
+          if (!isNaN(price) && price > 10 && price < 50000) {
+            prices.push(price);
           }
-        });
-      }
-      
-      return cards;
-    });
-    
-    // Si toujours pas de prix, essayer d'intercepter les requetes API
-    if (listings.every(l => l.price === null)) {
-      // Recuperer les prix depuis le contenu de la page
-      const pageContent = await page.content();
-      const priceRegex = /"price":\s*"?(\d+(?:\.\d+)?)"?/g;
-      const eurRegex = /"eur":\s*"?(\d+(?:\.\d+)?)"?/g;
-      
-      let match;
-      let idx = 0;
-      
-      while ((match = eurRegex.exec(pageContent)) !== null && idx < listings.length) {
-        const price = parseFloat(match[1]);
-        if (!isNaN(price) && price > 0) {
-          listings[idx].price = price;
-          idx++;
         }
       }
-    }
+      
+      return { cards, prices };
+    });
     
     await page.close();
     
-    // Filtrer les listings sans prix et trier par prix
-    const validListings = listings.filter(l => l.price !== null && l.price > 0);
-    validListings.sort((a, b) => a.price - b.price);
+    // Combiner les prix API et DOM
+    const allPrices = [...new Set([...apiPrices, ...domData.prices])].sort((a, b) => a - b);
     
-    if (validListings.length > 0) {
-      console.log('  Prix trouves: ' + validListings.map(l => l.price + '€').join(', '));
+    // Assigner les prix aux cartes
+    const listings = domData.cards.map((card, i) => ({
+      ...card,
+      price: allPrices[i] || null,
+    }));
+    
+    if (allPrices.length > 0) {
+      console.log('  Prix detectes: ' + allPrices.slice(0, 5).map(p => p.toFixed(2) + '€').join(', '));
+    } else {
+      console.log('  Aucun prix detecte');
     }
     
-    return validListings.length > 0 ? validListings : listings;
+    return listings;
     
   } catch (error) {
     console.error('Erreur scraping ' + playerSlug + ':', error.message);
