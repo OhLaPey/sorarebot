@@ -714,19 +714,6 @@ async function createBrowser() {
 }
 
 async function scrapePlayerListings(browser, playerSlug, rarity) {
-  // D'abord essayer l'API GraphQL (plus fiable)
-  try {
-    const { listings, playerName } = await getTransferHistory(playerSlug, rarity);
-    
-    if (listings.length > 0) {
-      console.log('  API GraphQL: ' + listings.length + ' listings trouves');
-      return listings;
-    }
-  } catch (error) {
-    console.log('  API GraphQL echouee, fallback scraping...');
-  }
-  
-  // Fallback: scraping classique (sans Tesseract)
   const page = await browser.newPage();
   
   if (config.NORDVPN_USER && config.NORDVPN_PASS) {
@@ -743,11 +730,14 @@ async function scrapePlayerListings(browser, playerSlug, rarity) {
   
   try {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-    await sleep(3000);
+    await sleep(4000);
     
+    // Extraire les prix directement du HTML avec plusieurs methodes
     const listings = await page.evaluate(() => {
       const cards = [];
+      const seenPrices = new Set();
       
+      // Methode 1: Chercher les liens vers les cartes
       document.querySelectorAll('a[href*="/cards/"]').forEach(el => {
         const href = el.getAttribute('href');
         if (!href || !href.includes('/cards/')) return;
@@ -755,12 +745,29 @@ async function scrapePlayerListings(browser, playerSlug, rarity) {
         const cardSlug = href.split('/cards/')[1]?.split('?')[0];
         if (!cardSlug) return;
         
-        const text = el.textContent || '';
-        const priceMatch = text.match(/(\d[\d\s]*[,.]?\d*)\s*[€E\$]/i);
+        // Chercher le prix dans l'element ou ses parents
+        let text = el.textContent || '';
+        let parent = el.parentElement;
+        for (let i = 0; i < 5 && parent; i++) {
+          text += ' ' + (parent.textContent || '');
+          parent = parent.parentElement;
+        }
+        
+        // Patterns de prix: "123,45 €" ou "123.45 €" ou "€123.45" ou "123 €"
+        const pricePatterns = [
+          /(\d{1,3}(?:[\s,]\d{3})*(?:[,.]\d{1,2})?)\s*€/,
+          /€\s*(\d{1,3}(?:[\s,]\d{3})*(?:[,.]\d{1,2})?)/,
+          /(\d+(?:[,.]\d{1,2})?)\s*EUR/i,
+        ];
         
         let price = null;
-        if (priceMatch) {
-          price = parseFloat(priceMatch[1].replace(/\s/g, '').replace(',', '.'));
+        for (const pattern of pricePatterns) {
+          const match = text.match(pattern);
+          if (match) {
+            let priceStr = match[1].replace(/\s/g, '').replace(',', '.');
+            price = parseFloat(priceStr);
+            if (!isNaN(price) && price > 0) break;
+          }
         }
         
         if (cardSlug && !cards.find(c => c.slug === cardSlug)) {
@@ -772,11 +779,56 @@ async function scrapePlayerListings(browser, playerSlug, rarity) {
         }
       });
       
+      // Methode 2: Chercher tous les elements avec des prix
+      if (cards.every(c => c.price === null)) {
+        const allText = document.body.innerText;
+        const priceMatches = allText.match(/(\d{1,3}(?:[\s,]\d{3})*(?:[,.]\d{1,2})?)\s*€/g) || [];
+        
+        priceMatches.forEach((match, i) => {
+          const priceStr = match.replace(/[€\s]/g, '').replace(',', '.');
+          const price = parseFloat(priceStr);
+          if (!isNaN(price) && price > 10 && price < 50000 && !seenPrices.has(price)) {
+            seenPrices.add(price);
+            if (cards[i]) {
+              cards[i].price = price;
+            }
+          }
+        });
+      }
+      
       return cards;
     });
     
+    // Si toujours pas de prix, essayer d'intercepter les requetes API
+    if (listings.every(l => l.price === null)) {
+      // Recuperer les prix depuis le contenu de la page
+      const pageContent = await page.content();
+      const priceRegex = /"price":\s*"?(\d+(?:\.\d+)?)"?/g;
+      const eurRegex = /"eur":\s*"?(\d+(?:\.\d+)?)"?/g;
+      
+      let match;
+      let idx = 0;
+      
+      while ((match = eurRegex.exec(pageContent)) !== null && idx < listings.length) {
+        const price = parseFloat(match[1]);
+        if (!isNaN(price) && price > 0) {
+          listings[idx].price = price;
+          idx++;
+        }
+      }
+    }
+    
     await page.close();
-    return listings;
+    
+    // Filtrer les listings sans prix et trier par prix
+    const validListings = listings.filter(l => l.price !== null && l.price > 0);
+    validListings.sort((a, b) => a.price - b.price);
+    
+    if (validListings.length > 0) {
+      console.log('  Prix trouves: ' + validListings.map(l => l.price + '€').join(', '));
+    }
+    
+    return validListings.length > 0 ? validListings : listings;
     
   } catch (error) {
     console.error('Erreur scraping ' + playerSlug + ':', error.message);
@@ -1153,8 +1205,9 @@ async function graphqlQuery(query, variables = {}) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Content-Length': data.length,
+        'Content-Length': Buffer.byteLength(data),
         'User-Agent': 'SorareAlertBot/2.0',
+        'Accept': 'application/json',
       },
     };
     
@@ -1164,8 +1217,12 @@ async function graphqlQuery(query, variables = {}) {
       res.on('end', () => {
         try {
           const json = JSON.parse(body);
+          if (json.errors) {
+            console.log('  API Erreur:', JSON.stringify(json.errors).substring(0, 200));
+          }
           resolve(json);
         } catch (e) {
+          console.log('  API Response brute:', body.substring(0, 300));
           reject(new Error('Invalid JSON response'));
         }
       });
@@ -1204,54 +1261,33 @@ async function getPlayerSlugFromName(playerName) {
 }
 
 async function getSalesHistoryFromAPI(playerSlug, rarity) {
-  // Mapper la rarete vers le format Sorare API
-  const rarityMap = {
-    'super_rare': 'super_rare',
-    'rare': 'rare', 
-    'unique': 'unique',
-    'limited': 'limited',
-  };
-  
-  const apiRarity = rarityMap[rarity] || rarity;
-  
+  // L'API publique ne donne pas l'historique complet des ventes
+  // On retourne un tableau vide - les ventes seront trackees au fil du temps
+  console.log('  Note: Historique ventes non disponible via API publique');
+  return { listings: [], sales: [] };
+}
+
+async function getTransferHistory(playerSlug, rarity) {
+  // Requete pour obtenir les cartes en vente d'un joueur
   const query = `
     query GetPlayerCards($slug: String!) {
       football {
         player(slug: $slug) {
-          slug
           displayName
-          cards(first: 50) {
-            nodes {
+          slug
+        }
+      }
+      tokens {
+        liveSingleSaleOffers(first: 50) {
+          nodes {
+            price
+            anyCards {
               slug
-              rarity
-              serialNumber
-              season {
-                name
-              }
-              tokenOwner {
-                ... on TokenOwnerUser {
-                  user {
-                    slug
-                  }
-                }
-              }
-              latestEnglishAuction {
-                bestBid {
-                  amounts {
-                    eur
-                  }
-                  bidder {
-                    ... on User {
-                      slug
-                    }
-                  }
-                }
-                endDate
-              }
-              liveSingleSaleOffer {
-                price {
-                  eur
-                }
+              name
+              rarityTyped
+              anyPlayer {
+                slug
+                displayName
               }
             }
           }
@@ -1263,121 +1299,39 @@ async function getSalesHistoryFromAPI(playerSlug, rarity) {
   try {
     const result = await graphqlQuery(query, { slug: playerSlug });
     
-    if (!result.data?.football?.player?.cards?.nodes) {
-      console.log('  Pas de cartes trouvees via API');
-      return { listings: [], sales: [] };
-    }
+    const playerName = result.data?.football?.player?.displayName || playerSlug;
+    const offers = result.data?.tokens?.liveSingleSaleOffers?.nodes || [];
     
-    const cards = result.data.football.player.cards.nodes;
+    // Filtrer pour ce joueur et cette rarete
     const listings = [];
-    const sales = [];
+    const rarityMap = {
+      'super_rare': 'SUPER_RARE',
+      'rare': 'RARE',
+      'unique': 'UNIQUE',
+      'limited': 'LIMITED',
+    };
+    const targetRarity = rarityMap[rarity] || rarity.toUpperCase();
     
-    for (const card of cards) {
-      // Filtrer par rarete
-      if (card.rarity?.toLowerCase().replace(' ', '_') !== apiRarity) continue;
-      
-      // Listings actifs
-      if (card.liveSingleSaleOffer?.price?.eur) {
-        listings.push({
-          slug: card.slug,
-          price: card.liveSingleSaleOffer.price.eur,
-          serial: card.serialNumber,
-          season: card.season?.name || '',
-          url: 'https://sorare.com/fr/football/cards/' + card.slug,
-        });
-      }
-      
-      // Encheres terminees
-      if (card.latestEnglishAuction?.bestBid?.amounts?.eur) {
-        sales.push({
-          price: card.latestEnglishAuction.bestBid.amounts.eur,
-          type: 'auction',
-          date: card.latestEnglishAuction.endDate || new Date().toISOString(),
-          season: card.season?.name || '',
-          serial: card.serialNumber?.toString() || '',
-          buyer: card.latestEnglishAuction.bestBid.bidder?.slug || '',
-          seller: '',
-        });
-      }
-    }
-    
-    // Trier les listings par prix croissant
-    listings.sort((a, b) => a.price - b.price);
-    
-    console.log('  API: ' + listings.length + ' listings, ' + sales.length + ' ventes');
-    return { listings, sales };
-    
-  } catch (error) {
-    console.error('Erreur API Sorare:', error.message);
-    return { listings: [], sales: [] };
-  }
-}
-
-async function getTransferHistory(playerSlug, rarity) {
-  const rarityMap = {
-    'super_rare': 'SUPER_RARE',
-    'rare': 'RARE', 
-    'unique': 'UNIQUE',
-    'limited': 'LIMITED',
-  };
-  
-  const apiRarity = rarityMap[rarity] || 'SUPER_RARE';
-  
-  const query = `
-    query GetTransfers($slug: String!, $rarity: [Rarity!]) {
-      football {
-        player(slug: $slug) {
-          displayName
-          cards(rarities: $rarity, first: 100) {
-            nodes {
-              slug
-              rarity
-              serialNumber
-              season {
-                name
-              }
-              tradeableStatus
-              liveSingleSaleOffer {
-                price {
-                  eur
-                }
-              }
-            }
-          }
+    for (const offer of offers) {
+      for (const card of (offer.anyCards || [])) {
+        const cardPlayerSlug = card.anyPlayer?.slug;
+        const cardRarity = card.rarityTyped;
+        
+        if (cardPlayerSlug === playerSlug && cardRarity === targetRarity) {
+          listings.push({
+            slug: card.slug,
+            price: offer.price ? parseFloat(offer.price) / 1e18 : null, // Convertir wei en ETH
+            url: 'https://sorare.com/fr/football/cards/' + card.slug,
+          });
         }
       }
     }
-  `;
-  
-  try {
-    const result = await graphqlQuery(query, { slug: playerSlug, rarity: [apiRarity] });
     
-    if (!result.data?.football?.player?.cards?.nodes) {
-      return { listings: [], playerName: '' };
-    }
-    
-    const playerName = result.data.football.player.displayName || playerSlug;
-    const cards = result.data.football.player.cards.nodes;
-    const listings = [];
-    
-    for (const card of cards) {
-      if (card.liveSingleSaleOffer?.price?.eur) {
-        listings.push({
-          slug: card.slug,
-          price: card.liveSingleSaleOffer.price.eur,
-          serial: card.serialNumber,
-          season: card.season?.name || '',
-          url: 'https://sorare.com/fr/football/cards/' + card.slug,
-        });
-      }
-    }
-    
-    listings.sort((a, b) => a.price - b.price);
-    
+    console.log('  API: Offres filtrees: ' + listings.length + ' pour ' + playerSlug);
     return { listings, playerName };
     
   } catch (error) {
-    console.error('Erreur API transfers:', error.message);
+    console.error('  Erreur API transfers:', error.message);
     return { listings: [], playerName: '' };
   }
 }
