@@ -247,7 +247,6 @@ async function sendDiscordAlert(embed) {
 // ============================================================
 
 async function createBrowser() {
-  // Chercher le chemin de Chromium
   let executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
   
   if (!executablePath) {
@@ -541,7 +540,8 @@ app.get('/api/status', (req, res) => {
 //                    DASHBOARD HTML
 // ============================================================
 
-const dashboardHTML = `<!DOCTYPE html>
+app.get('/', (req, res) => {
+  res.send(`<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
@@ -719,158 +719,178 @@ const dashboardHTML = `<!DOCTYPE html>
   <script>
     async function loadData() {
       try {
-        const [statusRes, watchlistRes] = await Promise.all([
-          fetch('/api/status'),
-          fetch('/watchlist')
-        ]);
-        const status = await statusRes.json();
-        const watchlist = await watchlistRes.json();
-        document.getElementById('stat-players').textContent = watchlist.players?.length || 0;
-        document.getElementById('stat-clubs').textContent = watchlist.clubs?.length || 0;
-        document.getElementById('stat-scans').textContent = status.totalScans || 0;
-        document.getElementById('stat-alerts').textContent = status.alertsSent || 0;
+        var statusRes = await fetch("/api/status");
+        var watchlistRes = await fetch("/watchlist");
+        var status = await statusRes.json();
+        var wl = await watchlistRes.json();
+        document.getElementById("stat-players").textContent = wl.players ? wl.players.length : 0;
+        document.getElementById("stat-clubs").textContent = wl.clubs ? wl.clubs.length : 0;
+        document.getElementById("stat-scans").textContent = status.totalScans || 0;
+        document.getElementById("stat-alerts").textContent = status.alertsSent || 0;
         if (status.lastScan) {
-          const date = new Date(status.lastScan);
-          document.getElementById('last-scan').textContent = 'Dernier scan : ' + date.toLocaleString('fr-FR');
+          var date = new Date(status.lastScan);
+          document.getElementById("last-scan").textContent = "Dernier scan : " + date.toLocaleString("fr-FR");
         }
-        renderPlayers(watchlist.players || []);
-        renderClubs(watchlist.clubs || []);
+        renderPlayers(wl.players || []);
+        renderClubs(wl.clubs || []);
       } catch (err) {
-        console.error('Erreur chargement:', err);
-        showToast('Erreur de chargement', true);
+        console.error("Erreur chargement:", err);
+        showToast("Erreur de chargement", true);
       }
     }
+    
     function renderPlayers(players) {
-      const container = document.getElementById('player-list');
+      var container = document.getElementById("player-list");
       if (players.length === 0) {
         container.innerHTML = '<div class="empty-state">Aucun joueur surveille</div>';
         return;
       }
-      container.innerHTML = players.map(p => 
-        '<div class="player-item">' +
-          '<div class="player-info">' +
-            '<span class="player-name">' + p.name + '</span>' +
-            '<span class="player-rarity ' + p.rarity + '">' + p.rarity.replace('_', ' ') + '</span>' +
-          '</div>' +
-          '<div class="player-actions">' +
-            '<input type="number" class="price-input" id="price-' + p.slug + '" value="' + (p.maxPrice || '') + '" placeholder="Max $" onchange="updatePrice(\'' + p.slug + '\', this.value)">' +
-            '<button class="btn-small danger" onclick="removePlayer(\'' + p.slug + '\')">X</button>' +
-          '</div>' +
-        '</div>'
-      ).join('');
+      var html = "";
+      for (var i = 0; i < players.length; i++) {
+        var p = players[i];
+        html += '<div class="player-item">';
+        html += '<div class="player-info">';
+        html += '<span class="player-name">' + p.name + '</span>';
+        html += '<span class="player-rarity ' + p.rarity + '">' + p.rarity.replace("_", " ") + '</span>';
+        html += '</div>';
+        html += '<div class="player-actions">';
+        html += '<input type="number" class="price-input" data-slug="' + p.slug + '" value="' + (p.maxPrice || "") + '" placeholder="Max $">';
+        html += '<button class="btn-small danger" data-slug="' + p.slug + '" onclick="removePlayer(this.dataset.slug)">X</button>';
+        html += '</div></div>';
+      }
+      container.innerHTML = html;
+      container.querySelectorAll(".price-input").forEach(function(input) {
+        input.addEventListener("change", function() {
+          updatePrice(this.dataset.slug, this.value);
+        });
+      });
     }
+    
     function renderClubs(clubs) {
-      const container = document.getElementById('club-list');
+      var container = document.getElementById("club-list");
       if (clubs.length === 0) {
         container.innerHTML = '<div class="empty-state">Aucun club surveille</div>';
         return;
       }
-      container.innerHTML = clubs.map(c => 
-        '<div class="player-item club-item">' +
-          '<div class="player-info">' +
-            '<span class="player-name">' + c.name + '</span>' +
-            '<span class="player-rarity ' + c.rarity + '">' + c.rarity.replace('_', ' ') + '</span>' +
-          '</div>' +
-          '<div class="player-actions">' +
-            '<input type="number" class="price-input" id="club-price-' + c.slug + '" value="' + (c.maxPrice || '') + '" placeholder="Max $" onchange="updateClubPrice(\'' + c.slug + '\', this.value)">' +
-            '<button class="btn-small danger" onclick="removeClub(\'' + c.slug + '\')">X</button>' +
-          '</div>' +
-        '</div>'
-      ).join('');
+      var html = "";
+      for (var i = 0; i < clubs.length; i++) {
+        var c = clubs[i];
+        html += '<div class="player-item club-item">';
+        html += '<div class="player-info">';
+        html += '<span class="player-name">' + c.name + '</span>';
+        html += '<span class="player-rarity ' + c.rarity + '">' + c.rarity.replace("_", " ") + '</span>';
+        html += '</div>';
+        html += '<div class="player-actions">';
+        html += '<input type="number" class="price-input" data-slug="' + c.slug + '" value="' + (c.maxPrice || "") + '" placeholder="Max $">';
+        html += '<button class="btn-small danger" data-slug="' + c.slug + '" onclick="removeClub(this.dataset.slug)">X</button>';
+        html += '</div></div>';
+      }
+      container.innerHTML = html;
+      container.querySelectorAll(".price-input").forEach(function(input) {
+        input.addEventListener("change", function() {
+          updateClubPrice(this.dataset.slug, this.value);
+        });
+      });
     }
+    
     async function addPlayer() {
-      const slug = document.getElementById('player-slug').value.trim();
-      const rarity = document.getElementById('player-rarity').value;
-      const maxPrice = document.getElementById('player-maxprice').value;
-      if (!slug) { showToast('Entre un slug de joueur', true); return; }
+      var slug = document.getElementById("player-slug").value.trim();
+      var rarity = document.getElementById("player-rarity").value;
+      var maxPrice = document.getElementById("player-maxprice").value;
+      if (!slug) { showToast("Entre un slug de joueur", true); return; }
       try {
-        const res = await fetch('/watchlist/player', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slug, rarity, maxPrice: maxPrice ? parseFloat(maxPrice) : null })
+        var res = await fetch("/watchlist/player", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slug: slug, rarity: rarity, maxPrice: maxPrice ? parseFloat(maxPrice) : null })
         });
         if (res.ok) {
-          showToast('Joueur ajoute !');
-          document.getElementById('player-slug').value = '';
-          document.getElementById('player-maxprice').value = '';
+          showToast("Joueur ajoute !");
+          document.getElementById("player-slug").value = "";
+          document.getElementById("player-maxprice").value = "";
           loadData();
-        } else { showToast('Erreur ajout', true); }
-      } catch (err) { showToast('Erreur reseau', true); }
+        } else { showToast("Erreur ajout", true); }
+      } catch (err) { showToast("Erreur reseau", true); }
     }
+    
     async function addClub() {
-      const slug = document.getElementById('club-slug').value.trim();
-      const rarity = document.getElementById('club-rarity').value;
-      const maxPrice = document.getElementById('club-maxprice').value;
-      if (!slug) { showToast('Entre un slug de club', true); return; }
+      var slug = document.getElementById("club-slug").value.trim();
+      var rarity = document.getElementById("club-rarity").value;
+      var maxPrice = document.getElementById("club-maxprice").value;
+      if (!slug) { showToast("Entre un slug de club", true); return; }
       try {
-        const res = await fetch('/watchlist/club', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slug, rarity, maxPrice: maxPrice ? parseFloat(maxPrice) : null })
+        var res = await fetch("/watchlist/club", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slug: slug, rarity: rarity, maxPrice: maxPrice ? parseFloat(maxPrice) : null })
         });
         if (res.ok) {
-          showToast('Club ajoute !');
-          document.getElementById('club-slug').value = '';
-          document.getElementById('club-maxprice').value = '';
+          showToast("Club ajoute !");
+          document.getElementById("club-slug").value = "";
+          document.getElementById("club-maxprice").value = "";
           loadData();
-        } else { showToast('Erreur ajout', true); }
-      } catch (err) { showToast('Erreur reseau', true); }
+        } else { showToast("Erreur ajout", true); }
+      } catch (err) { showToast("Erreur reseau", true); }
     }
+    
     async function removePlayer(slug) {
-      if (!confirm('Supprimer ce joueur de la watchlist ?')) return;
+      if (!confirm("Supprimer ce joueur de la watchlist ?")) return;
       try {
-        const res = await fetch('/watchlist/player/' + slug, { method: 'DELETE' });
-        if (res.ok) { showToast('Joueur supprime'); loadData(); }
-      } catch (err) { showToast('Erreur suppression', true); }
+        var res = await fetch("/watchlist/player/" + slug, { method: "DELETE" });
+        if (res.ok) { showToast("Joueur supprime"); loadData(); }
+      } catch (err) { showToast("Erreur suppression", true); }
     }
+    
     async function removeClub(slug) {
-      if (!confirm('Supprimer ce club de la watchlist ?')) return;
+      if (!confirm("Supprimer ce club de la watchlist ?")) return;
       try {
-        const res = await fetch('/watchlist/club/' + slug, { method: 'DELETE' });
-        if (res.ok) { showToast('Club supprime'); loadData(); }
-      } catch (err) { showToast('Erreur suppression', true); }
+        var res = await fetch("/watchlist/club/" + slug, { method: "DELETE" });
+        if (res.ok) { showToast("Club supprime"); loadData(); }
+      } catch (err) { showToast("Erreur suppression", true); }
     }
+    
     async function updatePrice(slug, price) {
       try {
-        const res = await fetch('/watchlist/player/' + slug + '/price', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+        var res = await fetch("/watchlist/player/" + slug + "/price", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ maxPrice: price ? parseFloat(price) : null })
         });
-        if (res.ok) { showToast('Prix mis a jour'); }
-      } catch (err) { showToast('Erreur mise a jour', true); }
+        if (res.ok) { showToast("Prix mis a jour"); }
+      } catch (err) { showToast("Erreur mise a jour", true); }
     }
+    
     async function updateClubPrice(slug, price) {
       try {
-        const res = await fetch('/watchlist/club/' + slug + '/price', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+        var res = await fetch("/watchlist/club/" + slug + "/price", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ maxPrice: price ? parseFloat(price) : null })
         });
-        if (res.ok) { showToast('Prix mis a jour'); }
-      } catch (err) { showToast('Erreur mise a jour', true); }
+        if (res.ok) { showToast("Prix mis a jour"); }
+      } catch (err) { showToast("Erreur mise a jour", true); }
     }
+    
     async function triggerScan() {
-      showToast('Scan en cours...');
+      showToast("Scan en cours...");
       try {
-        await fetch('/scan', { method: 'POST' });
+        await fetch("/scan", { method: "POST" });
         setTimeout(loadData, 3000);
-      } catch (err) { showToast('Erreur scan', true); }
+      } catch (err) { showToast("Erreur scan", true); }
     }
+    
     function showToast(message, isError) {
-      const toast = document.getElementById('toast');
+      var toast = document.getElementById("toast");
       toast.textContent = message;
-      toast.className = 'toast show' + (isError ? ' error' : '');
-      setTimeout(function() { toast.className = 'toast'; }, 3000);
+      toast.className = "toast show" + (isError ? " error" : "");
+      setTimeout(function() { toast.className = "toast"; }, 3000);
     }
+    
     loadData();
     setInterval(loadData, 30000);
   </script>
 </body>
-</html>`;
-
-app.get('/', (req, res) => {
-  res.send(dashboardHTML);
+</html>`);
 });
 
 // API watchlist
