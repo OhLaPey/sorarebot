@@ -577,6 +577,74 @@ input[type="number"] { width: 110px; }
 .trade-row .tr-sell { font-weight: 600; }
 .trade-row .tr-pnl { font-weight: 700; }
 .trade-row .tr-pct { font-size: 0.82rem; margin-left: 4px; }
+
+/* === DOCUMENTATION === */
+.doc-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin-bottom: 16px;
+}
+
+.doc-section h3 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.doc-section p, .doc-section li {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.doc-section ul { padding-left: 20px; margin: 8px 0; }
+.doc-section li { margin-bottom: 4px; }
+.doc-section strong { color: var(--text-primary); }
+.doc-section code {
+  background: var(--bg-input);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.82rem;
+  color: var(--accent);
+  font-family: monospace;
+}
+
+.doc-cmd-table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+.doc-cmd-table th { text-align: left; padding: 8px 12px; color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+.doc-cmd-table td { padding: 8px 12px; font-size: 0.85rem; border-bottom: 1px solid rgba(37,37,96,0.3); }
+.doc-cmd-table td:first-child { font-family: monospace; color: var(--accent); font-weight: 600; }
+
+.doc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .doc-grid { grid-template-columns: 1fr; } }
+
+.doc-feature {
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  border-left: 3px solid var(--accent);
+}
+
+.doc-feature h4 {
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.doc-feature p { font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5; }
+
+.doc-version {
+  text-align: center;
+  padding: 16px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
 </style>
 </head>
 <body>
@@ -630,6 +698,9 @@ input[type="number"] { width: 110px; }
   </div>
   <div class="nav-item" onclick="navigate('settings')">
     <span class="icon">&#9881;</span> Parametres
+  </div>
+  <div class="nav-item" onclick="navigate('docs')">
+    <span class="icon">&#9776;</span> Documentation
   </div>
 
   <div class="refresh-info">
@@ -1084,6 +1155,174 @@ input[type="number"] { width: 110px; }
   <div class="card">
     <div class="card-header"><h3>Paliers de recompenses par ligue</h3></div>
     <div id="rewards-content"></div>
+  </div>
+</div>
+
+<!-- ===== DOCUMENTATION PAGE ===== -->
+<div id="page-docs" class="page">
+  <div class="page-header">
+    <h2>Documentation</h2>
+    <div class="actions">
+      <span class="badge badge-sr" style="font-size:0.78rem;padding:6px 14px">v3.0</span>
+    </div>
+  </div>
+
+  <div class="doc-section">
+    <h3>&#9670; Vue d'ensemble</h3>
+    <p><strong>Sorare Tracker Pro</strong> est ton outil complet pour gerer ton activite sur Sorare. Il combine suivi de marche, analyse de performance, gestion de portfolio, et calcul d'EV en un seul dashboard.</p>
+    <p style="margin-top:10px">Le dashboard est heberge sur <strong>Railway.app</strong> et accessible 24h/24. Il scanne automatiquement le marche toutes les 5 min et t'envoie des alertes Discord.</p>
+  </div>
+
+  <div class="doc-section">
+    <h3>&#9917; Jouer</h3>
+    <p>L'onglet <strong>Jouer</strong> te permet de gerer tes compositions et suivre tes performances en Gameweek.</p>
+    <div class="doc-grid" style="margin-top:12px">
+      <div class="doc-feature">
+        <h4>Composer une lineup</h4>
+        <p>Selectionne 5 cartes de ton portfolio pour chaque GW et ligue. Les cartes sont organisees par position : Gardien, Defenseur, Milieu, Attaquant, Extra.</p>
+      </div>
+      <div class="doc-feature">
+        <h4>Enregistrer un resultat</h4>
+        <p>Apres chaque GW, entre ton classement, score total, reward et nombre de participants. Ces donnees alimentent les graphiques de progression.</p>
+      </div>
+      <div class="doc-feature">
+        <h4>Historique & Stats</h4>
+        <p>Visualise l'historique de tous tes resultats avec medailles (or/argent/bronze). Filtre par ligue pour analyser tes performances specifiques.</p>
+      </div>
+      <div class="doc-feature">
+        <h4>Graphiques</h4>
+        <p>Rewards par ligue (bar chart) et evolution des scores au fil des GW (line chart). Identifie tes ligues les plus rentables.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="doc-section">
+    <h3>&#8644; Marche des transferts</h3>
+    <p>Explore le marche Sorare en temps reel avec des outils de recherche avances.</p>
+    <div class="doc-grid" style="margin-top:12px">
+      <div class="doc-feature">
+        <h4>Recherche avancee</h4>
+        <p>Recherche par nom de joueur, rarete (Super Rare, Rare, Unique) et fourchette de prix. Les resultats se mettent a jour apres chaque scan.</p>
+      </div>
+      <div class="doc-feature">
+        <h4>Actions rapides</h4>
+        <p><strong>+ Watch</strong> ajoute directement a ta watchlist. <strong>+ Portfolio</strong> ajoute la carte a ton portfolio avec le prix floor pre-rempli.</p>
+      </div>
+      <div class="doc-feature">
+        <h4>Ventes recentes</h4>
+        <p>Historique des dernieres ventes realisees sur le marche. Utile pour estimer la valeur reelle d'un joueur.</p>
+      </div>
+      <div class="doc-feature">
+        <h4>Distribution des prix</h4>
+        <p>Histogramme montrant la repartition des joueurs par tranche de prix. Identifie les segments les plus actifs du marche.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="doc-section">
+    <h3>&#9650; Rentabilite</h3>
+    <p>Analyse complete de ta rentabilite sur Sorare : trading + rewards.</p>
+    <ul>
+      <li><strong>Profit net</strong> = P&L trading realise + total des rewards gagnes</li>
+      <li><strong>ROI global</strong> = profit net / total des depenses (investissement actif + trades)</li>
+      <li><strong>P&L mensuel</strong> = graphique empile trading + rewards mois par mois</li>
+      <li><strong>Repartition par rarete</strong> = donut chart de ton investissement actif</li>
+      <li><strong>Best/Worst trades</strong> = top 5 meilleurs et pires trades avec % de gain</li>
+      <li><strong>Historique complet</strong> = tableau de toutes les ventes realisees (triees par date)</li>
+    </ul>
+  </div>
+
+  <div class="doc-section">
+    <h3>&#9733; EV & Ligues</h3>
+    <p>Calcul de l'<strong>Expected Value</strong> (valeur esperee) par ligue.</p>
+    <ul>
+      <li><strong>EV Base</strong> = Cash Pool / Participants (valeur brute si tu jouais au hasard)</li>
+      <li><strong>EV Ajuste</strong> = EV Base x Edge personnel (ton avantage competitif)</li>
+      <li><strong>Edge</strong> = multiplicateur que tu definis selon ton niveau dans chaque ligue (1.0 = moyen, >1 = au-dessus, <1 = en-dessous)</li>
+      <li>Enregistre les participants a chaque GW pour un calcul precis</li>
+    </ul>
+  </div>
+
+  <div class="doc-section">
+    <h3>&#9632; Portfolio</h3>
+    <p>Gestion complete de tes cartes Sorare.</p>
+    <ul>
+      <li><strong>Ajouter une carte</strong> : slug du joueur + rarete + prix d'achat + type (marche/encheres/pack)</li>
+      <li><strong>Vendre une carte</strong> : entre le prix de vente, le P&L est calcule automatiquement</li>
+      <li><strong>Floor tracking</strong> : le prix floor est mis a jour automatiquement a chaque scan</li>
+      <li><strong>P&L latent</strong> = valeur actuelle - prix d'achat (pour les cartes non vendues)</li>
+    </ul>
+  </div>
+
+  <div class="doc-section">
+    <h3>&#9673; Watchlist & Encheres</h3>
+    <ul>
+      <li><strong>Watchlist</strong> : ajoute des joueurs/clubs a surveiller avec un seuil de prix optionnel</li>
+      <li><strong>Encheres</strong> : suivi en temps reel des encheres actives avec alerte si le bid est sous ton seuil</li>
+      <li><strong>Opportunites</strong> : detection automatique de decotes (prix < moyenne ventes) et anomalies</li>
+    </ul>
+  </div>
+
+  <div class="doc-section">
+    <h3>&#128172; Commandes Discord</h3>
+    <table class="doc-cmd-table">
+      <thead><tr><th>Commande</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>/watchlist</td><td>Afficher la watchlist avec prix floors</td></tr>
+        <tr><td>/addplayer slug rarity maxprice</td><td>Ajouter un joueur a la watchlist</td></tr>
+        <tr><td>/removeplayer slug</td><td>Retirer un joueur de la watchlist</td></tr>
+        <tr><td>/setprice slug maxprice</td><td>Definir un seuil d'alerte prix</td></tr>
+        <tr><td>/portfolio</td><td>Afficher le portfolio avec P&L</td></tr>
+        <tr><td>/acheter slug rarity prix type</td><td>Ajouter une carte au portfolio</td></tr>
+        <tr><td>/vendre joueur prix</td><td>Enregistrer une vente</td></tr>
+        <tr><td>/opportunites</td><td>Afficher les opportunites detectees</td></tr>
+        <tr><td>/import joueur rarete</td><td>Importer l'historique de ventes d'un joueur</td></tr>
+        <tr><td>/scan</td><td>Lancer un scan immediat</td></tr>
+        <tr><td>/stats</td><td>Statistiques du bot</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="doc-section">
+    <h3>&#9881; Configuration</h3>
+    <p>Variables d'environnement a configurer sur Railway :</p>
+    <table class="doc-cmd-table">
+      <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>DISCORD_TOKEN</td><td>Token du bot Discord</td></tr>
+        <tr><td>DISCORD_CLIENT_ID</td><td>Application ID du bot Discord</td></tr>
+        <tr><td>DISCORD_CHANNEL_ID</td><td>ID du salon pour les alertes</td></tr>
+        <tr><td>PORT</td><td>Port du serveur (3000 par defaut)</td></tr>
+        <tr><td>NORDVPN_USER</td><td>Username NordVPN SOCKS5 (optionnel)</td></tr>
+        <tr><td>NORDVPN_PASS</td><td>Password NordVPN SOCKS5 (optionnel)</td></tr>
+        <tr><td>NORDVPN_SERVER</td><td>Serveur NordVPN (ex: fr751.nordvpn.com)</td></tr>
+        <tr><td>GOOGLE_CREDENTIALS</td><td>JSON Google Sheets (optionnel)</td></tr>
+        <tr><td>GOOGLE_SHEET_ID</td><td>ID de la Google Sheet (optionnel)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="doc-section">
+    <h3>&#128270; Trouver un slug joueur</h3>
+    <p>Dans l'URL Sorare du joueur :</p>
+    <p style="margin:10px 0"><code>https://sorare.com/fr/football/players/<strong>bradley-barcola</strong>/cards</code></p>
+    <p>La partie en gras est le <strong>slug</strong>. Utilise-le pour ajouter des joueurs a ta watchlist ou ton portfolio.</p>
+  </div>
+
+  <div class="doc-section">
+    <h3>&#9888; Notes importantes</h3>
+    <ul>
+      <li><strong>Premier scan</strong> : au demarrage, le bot enregistre les listings existants. Les alertes Discord commencent au 2eme scan.</li>
+      <li><strong>Scan automatique</strong> : marche toutes les 5 min, encheres toutes les 10 min, ventes toutes les 6h.</li>
+      <li><strong>Proxy NordVPN</strong> : recommande pour eviter les blocages IP par Sorare.</li>
+      <li><strong>Base de donnees</strong> : SQLite persiste dans <code>./data/sorare.db</code>. Sur Railway, les donnees persistent entre les redemarrages.</li>
+      <li><strong>Auto-refresh</strong> : le dashboard se rafraichit toutes les 30 secondes automatiquement.</li>
+    </ul>
+  </div>
+
+  <div class="doc-version">
+    Sorare Tracker Pro v3.0 - PPATCH Edition<br>
+    Heberge sur Railway.app - Accessible 24h/24
   </div>
 </div>
 
