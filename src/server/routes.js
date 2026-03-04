@@ -2,17 +2,20 @@
  * Routes API Express
  */
 const express = require('express');
+const path = require('path');
 const db = require('../db');
 const ev = require('../ev/calculator');
-const { generateDashboardHTML } = require('./dashboard');
 
 function createRouter(botStats) {
   const router = express.Router();
   router.use(express.json());
 
-  // Dashboard
+  // Serve static dashboard from public/
+  router.use(express.static(path.join(__dirname, '../../public')));
+
+  // Fallback to index.html for SPA
   router.get('/', (req, res) => {
-    res.send(generateDashboardHTML(botStats));
+    res.sendFile(path.join(__dirname, '../../public/index.html'));
   });
 
   // Status
