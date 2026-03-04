@@ -1,0 +1,2213 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sorare Tracker Pro - PPATCH</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-primary: #0a0a1a;
+  --bg-secondary: #111128;
+  --bg-card: #16163a;
+  --bg-card-hover: #1c1c48;
+  --bg-input: #0e0e26;
+  --border: #252560;
+  --border-hover: #3a3a80;
+  --text-primary: #e8e8f0;
+  --text-secondary: #8888aa;
+  --text-muted: #555577;
+  --accent: #7c3aed;
+  --accent-hover: #6d28d9;
+  --accent-glow: rgba(124, 58, 237, 0.25);
+  --green: #10b981;
+  --green-bg: rgba(16, 185, 129, 0.12);
+  --red: #ef4444;
+  --red-bg: rgba(239, 68, 68, 0.12);
+  --yellow: #f59e0b;
+  --yellow-bg: rgba(245, 158, 11, 0.12);
+  --blue: #3b82f6;
+  --blue-bg: rgba(59, 130, 246, 0.12);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 4px 24px rgba(0,0,0,0.3);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* === LAYOUT === */
+.app { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 240px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  padding: 20px 0;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  overflow-y: auto;
+  z-index: 100;
+  transition: transform 0.3s;
+}
+
+.sidebar-header {
+  padding: 0 20px 24px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.sidebar-header h1 {
+  font-size: 1.2rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, #7c3aed, #3b82f6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.sidebar-header p {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.nav-section {
+  padding: 8px 12px 4px;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  font-weight: 500;
+  transition: all 0.15s;
+  border-left: 3px solid transparent;
+}
+
+.nav-item:hover { background: var(--bg-card); color: var(--text-primary); }
+.nav-item.active {
+  background: var(--accent-glow);
+  color: var(--accent);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+
+.nav-item .icon { font-size: 1.1rem; width: 22px; text-align: center; }
+
+.main { flex: 1; margin-left: 240px; padding: 24px; }
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.page-header h2 {
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.page-header .actions { display: flex; gap: 8px; }
+
+/* === CARDS & GRIDS === */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.kpi {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  transition: border-color 0.2s;
+}
+
+.kpi:hover { border-color: var(--border-hover); }
+.kpi .kpi-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+.kpi .kpi-value { font-size: 1.7rem; font-weight: 800; margin-top: 6px; line-height: 1; }
+.kpi .kpi-sub { font-size: 0.78rem; color: var(--text-secondary); margin-top: 6px; }
+.kpi .kpi-value.positive { color: var(--green); }
+.kpi .kpi-value.negative { color: var(--red); }
+.kpi .kpi-value.accent { color: var(--accent); }
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.card-header h3 { font-size: 1rem; font-weight: 700; }
+.card-header .card-actions { display: flex; gap: 6px; }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+
+@media (max-width: 1024px) {
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+}
+
+/* === TABLES === */
+.table-wrap { overflow-x: auto; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+thead th {
+  text-align: left;
+  padding: 10px 14px;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+tbody td {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(37, 37, 96, 0.5);
+  white-space: nowrap;
+}
+
+tbody tr { transition: background 0.1s; }
+tbody tr:hover { background: var(--bg-card-hover); }
+tbody tr.highlight { background: var(--accent-glow); }
+
+.text-green { color: var(--green); }
+.text-red { color: var(--red); }
+.text-yellow { color: var(--yellow); }
+.text-blue { color: var(--blue); }
+.text-accent { color: var(--accent); }
+.text-muted { color: var(--text-muted); }
+.text-secondary { color: var(--text-secondary); }
+.fw-600 { font-weight: 600; }
+.fw-700 { font-weight: 700; }
+.mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; }
+
+/* === BADGES === */
+.badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.badge-sr { background: #7c3aed33; color: #a78bfa; }
+.badge-rare { background: #3b82f633; color: #60a5fa; }
+.badge-unique { background: #f59e0b33; color: #fbbf24; }
+.badge-limited { background: #10b98133; color: #34d399; }
+.badge-green { background: var(--green-bg); color: var(--green); }
+.badge-red { background: var(--red-bg); color: var(--red); }
+.badge-yellow { background: var(--yellow-bg); color: var(--yellow); }
+.badge-blue { background: var(--blue-bg); color: var(--blue); }
+
+/* === FORMS === */
+.form-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+input, select {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+
+input:focus, select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+input::placeholder { color: var(--text-muted); }
+input[type="number"] { width: 110px; }
+
+.btn {
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  border: none;
+  font-size: 0.88rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); box-shadow: 0 0 16px var(--accent-glow); }
+.btn-secondary { background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border); }
+.btn-secondary:hover { border-color: var(--border-hover); background: var(--bg-card-hover); }
+.btn-danger { background: #dc262633; color: var(--red); border: 1px solid #dc262655; }
+.btn-danger:hover { background: #dc262655; }
+.btn-success { background: var(--green-bg); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
+.btn-success:hover { background: rgba(16,185,129,0.2); }
+.btn-sm { padding: 6px 12px; font-size: 0.78rem; }
+.btn-icon { padding: 8px; font-size: 1rem; line-height: 1; }
+
+/* === OPPORTUNITY CARDS === */
+.opp-card {
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  margin-bottom: 8px;
+  border-left: 3px solid var(--green);
+  transition: background 0.15s;
+}
+
+.opp-card:hover { background: var(--bg-card-hover); }
+.opp-card.auction { border-left-color: var(--yellow); }
+.opp-card.anomaly { border-left-color: var(--red); }
+.opp-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+.opp-name { font-weight: 700; font-size: 0.92rem; }
+.opp-score { margin-left: auto; font-weight: 700; color: var(--yellow); font-size: 0.82rem; }
+.opp-detail { color: var(--text-secondary); font-size: 0.82rem; line-height: 1.5; }
+
+/* === CHART === */
+.chart-container {
+  position: relative;
+  height: 280px;
+  width: 100%;
+}
+
+/* === PAGES === */
+.page { display: none; }
+.page.active { display: block; }
+
+/* === TOAST === */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  padding: 14px 24px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 0.88rem;
+  z-index: 9999;
+  transform: translateY(100px);
+  opacity: 0;
+  transition: all 0.3s;
+  box-shadow: var(--shadow);
+}
+
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.success { background: var(--green); color: #fff; }
+.toast.error { background: var(--red); color: #fff; }
+.toast.info { background: var(--accent); color: #fff; }
+
+/* === MOBILE === */
+.mobile-toggle {
+  display: none;
+  position: fixed;
+  top: 12px; left: 12px;
+  z-index: 200;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 1.2rem;
+}
+
+@media (max-width: 768px) {
+  .sidebar { transform: translateX(-100%); }
+  .sidebar.open { transform: translateX(0); }
+  .main { margin-left: 0; }
+  .mobile-toggle { display: block; }
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .page-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+}
+
+/* === LOADING === */
+.loading { text-align: center; padding: 40px; color: var(--text-muted); }
+.spinner { display: inline-block; width: 24px; height: 24px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* === LIVE DOT === */
+.live-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  background: var(--green);
+  border-radius: 50%;
+  margin-right: 6px;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.refresh-info {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+/* === LINEUP BUILDER === */
+.lineup-pitch {
+  background: linear-gradient(180deg, #0d3320 0%, #0a2a1a 100%);
+  border: 1px solid #1a5535;
+  border-radius: var(--radius);
+  padding: 24px;
+  margin-bottom: 16px;
+  position: relative;
+  min-height: 320px;
+}
+
+.lineup-pitch::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: rgba(255,255,255,0.08);
+}
+
+.lineup-pitch::after {
+  content: '';
+  position: absolute;
+  top: 30%;
+  left: 25%;
+  right: 25%;
+  bottom: 30%;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 50%;
+}
+
+.lineup-slots {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+  position: relative;
+  z-index: 1;
+}
+
+.lineup-slot {
+  background: rgba(255,255,255,0.06);
+  border: 2px dashed rgba(255,255,255,0.15);
+  border-radius: var(--radius);
+  padding: 16px 8px;
+  text-align: center;
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.lineup-slot:hover { border-color: var(--accent); background: rgba(124,58,237,0.1); }
+.lineup-slot.filled { border-style: solid; border-color: var(--accent); background: rgba(124,58,237,0.12); }
+.lineup-slot .slot-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
+.lineup-slot .slot-name { font-weight: 700; font-size: 0.85rem; }
+.lineup-slot .slot-score { font-size: 1.4rem; font-weight: 800; color: var(--accent); }
+.lineup-slot .slot-rarity { margin-top: 2px; }
+
+.result-card {
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  transition: background 0.15s;
+}
+
+.result-card:hover { background: var(--bg-card-hover); }
+
+.result-rank {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 1.1rem;
+}
+
+.result-rank.gold { background: #f59e0b33; color: #fbbf24; }
+.result-rank.silver { background: #94a3b833; color: #cbd5e1; }
+.result-rank.bronze { background: #d9764433; color: #fb923c; }
+.result-rank.normal { background: var(--bg-card); color: var(--text-secondary); }
+.result-info { flex: 1; }
+.result-info .result-league { font-weight: 700; font-size: 0.92rem; }
+.result-info .result-meta { font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px; }
+.result-reward { text-align: right; }
+.result-reward .reward-value { font-weight: 800; font-size: 1.1rem; }
+.result-reward .reward-label { font-size: 0.72rem; color: var(--text-muted); }
+
+/* === MARKET SEARCH === */
+.search-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.search-bar input[type="text"] { flex: 1; min-width: 200px; }
+
+.market-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  transition: background 0.15s;
+}
+
+.market-card:hover { background: var(--bg-card-hover); }
+.market-card .mc-name { font-weight: 700; font-size: 0.92rem; flex: 1; }
+.market-card .mc-price { font-weight: 800; font-size: 1.05rem; color: var(--green); }
+.market-card .mc-listings { font-size: 0.8rem; color: var(--text-muted); }
+.market-card .mc-change { font-weight: 600; font-size: 0.82rem; }
+
+.sale-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(37, 37, 96, 0.4);
+}
+
+.sale-row .sale-player { font-weight: 600; flex: 1; }
+.sale-row .sale-price { font-weight: 700; color: var(--green); }
+.sale-row .sale-date { font-size: 0.78rem; color: var(--text-muted); }
+.sale-row .sale-type { font-size: 0.75rem; color: var(--text-secondary); }
+
+/* === PROFITABILITY === */
+.profit-metric {
+  text-align: center;
+  padding: 24px 16px;
+}
+
+.profit-metric .pm-value {
+  font-size: 2.2rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.profit-metric .pm-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.profit-metric .pm-sub {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.trade-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+}
+
+.trade-row .tr-name { font-weight: 700; flex: 1; }
+.trade-row .tr-buy { color: var(--text-secondary); font-size: 0.85rem; }
+.trade-row .tr-sell { font-weight: 600; }
+.trade-row .tr-pnl { font-weight: 700; }
+.trade-row .tr-pct { font-size: 0.82rem; margin-left: 4px; }
+</style>
+</head>
+<body>
+
+<button class="mobile-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')">&#9776;</button>
+
+<div class="app">
+<!-- SIDEBAR -->
+<nav class="sidebar">
+  <div class="sidebar-header">
+    <h1>Sorare Tracker</h1>
+    <p>PPATCH Edition</p>
+  </div>
+
+  <div class="nav-section">Principal</div>
+  <div class="nav-item active" onclick="navigate('overview')">
+    <span class="icon">&#9670;</span> Vue d'ensemble
+  </div>
+  <div class="nav-item" onclick="navigate('play')">
+    <span class="icon">&#9917;</span> Jouer
+  </div>
+  <div class="nav-item" onclick="navigate('market')">
+    <span class="icon">&#8644;</span> Transferts
+  </div>
+  <div class="nav-item" onclick="navigate('profitability')">
+    <span class="icon">&#9650;</span> Rentabilite
+  </div>
+
+  <div class="nav-section">Analyse</div>
+  <div class="nav-item" onclick="navigate('ev')">
+    <span class="icon">&#9733;</span> EV & Ligues
+  </div>
+  <div class="nav-item" onclick="navigate('portfolio')">
+    <span class="icon">&#9632;</span> Portfolio
+  </div>
+
+  <div class="nav-section">Marche</div>
+  <div class="nav-item" onclick="navigate('watchlist')">
+    <span class="icon">&#9673;</span> Watchlist
+  </div>
+  <div class="nav-item" onclick="navigate('auctions')">
+    <span class="icon">&#9883;</span> Encheres
+  </div>
+  <div class="nav-item" onclick="navigate('opportunities')">
+    <span class="icon">&#10022;</span> Opportunites
+  </div>
+
+  <div class="nav-section">Config</div>
+  <div class="nav-item" onclick="navigate('rewards')">
+    <span class="icon">&#9878;</span> Rewards
+  </div>
+  <div class="nav-item" onclick="navigate('settings')">
+    <span class="icon">&#9881;</span> Parametres
+  </div>
+
+  <div class="refresh-info">
+    <span class="live-dot"></span> Auto-refresh 30s
+    <br>Derniere MAJ: <span id="last-refresh">-</span>
+  </div>
+</nav>
+
+<!-- MAIN CONTENT -->
+<main class="main">
+
+<!-- ===== OVERVIEW PAGE ===== -->
+<div id="page-overview" class="page active">
+  <div class="page-header">
+    <h2>Vue d'ensemble</h2>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="triggerScan()">Lancer un scan</button>
+    </div>
+  </div>
+
+  <div class="kpi-grid" id="kpi-overview"></div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header"><h3>EV par ligue</h3></div>
+      <div class="chart-container"><canvas id="chart-ev-overview"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Portfolio P&L</h3></div>
+      <div class="chart-container"><canvas id="chart-portfolio-overview"></canvas></div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header"><h3>Opportunites recentes</h3></div>
+      <div id="overview-opps"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Encheres actives</h3></div>
+      <div id="overview-auctions"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== EV PAGE ===== -->
+<div id="page-ev" class="page">
+  <div class="page-header">
+    <h2>Expected Value & Ligues</h2>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h3>Enregistrer une GW</h3>
+    </div>
+    <div class="form-row">
+      <input type="number" id="gw-number" placeholder="N de GW" style="width:100px">
+      <select id="gw-league">
+        <option value="Ligue 1">Ligue 1</option>
+        <option value="Premier League">Premier League</option>
+        <option value="LaLiga">LaLiga</option>
+        <option value="Bundesliga">Bundesliga</option>
+        <option value="Eredivisie">Eredivisie</option>
+        <option value="Jupiler Pro">Jupiler Pro</option>
+        <option value="Challenger">Challenger</option>
+        <option value="Contender">Contender</option>
+      </select>
+      <input type="number" id="gw-participants" placeholder="Participants" style="width:130px">
+      <button class="btn btn-primary" onclick="addGW()">Enregistrer</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>EV actuel par ligue</h3></div>
+    <div class="table-wrap">
+      <table id="ev-table">
+        <thead><tr><th></th><th>Ligue</th><th>Participants</th><th>Cash Pool</th><th>EV Base</th><th>EV Ajuste</th><th>Edge</th></tr></thead>
+        <tbody id="ev-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header"><h3>Evolution EV</h3></div>
+      <div class="chart-container"><canvas id="chart-ev-history"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Evolution Participants</h3></div>
+      <div class="chart-container"><canvas id="chart-participants"></canvas></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>Edge personnel</h3></div>
+    <div class="form-row">
+      <select id="edge-league">
+        <option value="Ligue 1">Ligue 1</option>
+        <option value="Premier League">Premier League</option>
+        <option value="LaLiga">LaLiga</option>
+        <option value="Bundesliga">Bundesliga</option>
+        <option value="Eredivisie">Eredivisie</option>
+        <option value="Jupiler Pro">Jupiler Pro</option>
+      </select>
+      <input type="number" id="edge-value" placeholder="Ex: 1.3" step="0.1" min="0.5" max="3" style="width:110px">
+      <button class="btn btn-primary" onclick="setEdge()">Sauver</button>
+    </div>
+    <div class="table-wrap" style="margin-top:12px">
+      <table>
+        <thead><tr><th>Ligue</th><th>Multiplicateur</th><th>Niveau</th></tr></thead>
+        <tbody id="edge-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== PORTFOLIO PAGE ===== -->
+<div id="page-portfolio" class="page">
+  <div class="page-header">
+    <h2>Portfolio</h2>
+  </div>
+
+  <div class="kpi-grid" id="kpi-portfolio"></div>
+
+  <div class="card">
+    <div class="card-header"><h3>Ajouter une carte</h3></div>
+    <div class="form-row">
+      <input type="text" id="card-slug" placeholder="Slug du joueur" style="flex:1;min-width:160px">
+      <select id="card-rarity">
+        <option value="super_rare">Super Rare</option>
+        <option value="rare">Rare</option>
+        <option value="unique">Unique</option>
+      </select>
+      <input type="number" id="card-price" placeholder="Prix achat E" style="width:130px">
+      <select id="card-type">
+        <option value="market">Marche</option>
+        <option value="auction">Enchere</option>
+        <option value="trade">Trade</option>
+      </select>
+      <button class="btn btn-primary" onclick="addCard()">Ajouter</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>Mes cartes</h3></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Joueur</th><th>Rarete</th><th>Achat</th><th>Valeur</th><th>P&L</th><th>P&L %</th><th>Type</th><th></th></tr></thead>
+        <tbody id="portfolio-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== WATCHLIST PAGE ===== -->
+<div id="page-watchlist" class="page">
+  <div class="page-header">
+    <h2>Watchlist</h2>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="triggerScan()">Lancer un scan</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>Ajouter un joueur</h3></div>
+    <div class="form-row">
+      <input type="text" id="player-slug" placeholder="Slug du joueur" style="flex:1;min-width:160px">
+      <select id="player-rarity">
+        <option value="super_rare">Super Rare</option>
+        <option value="rare">Rare</option>
+        <option value="unique">Unique</option>
+      </select>
+      <input type="number" id="player-maxprice" placeholder="Prix max E" style="width:120px">
+      <button class="btn btn-primary" onclick="addPlayer()">Ajouter</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>Joueurs surveilles</h3></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Joueur</th><th>Rarete</th><th>Floor</th><th>Listings</th><th>Seuil</th><th></th></tr></thead>
+        <tbody id="watchlist-players-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>Ajouter un club</h3></div>
+    <div class="form-row">
+      <input type="text" id="club-slug" placeholder="Slug du club" style="flex:1;min-width:160px">
+      <select id="club-rarity">
+        <option value="unique">Unique</option>
+        <option value="super_rare">Super Rare</option>
+        <option value="rare">Rare</option>
+      </select>
+      <input type="number" id="club-maxprice" placeholder="Prix max E" style="width:120px">
+      <button class="btn btn-primary" onclick="addClub()">Ajouter</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>Clubs surveilles</h3></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Club</th><th>Rarete</th><th>Seuil</th><th></th></tr></thead>
+        <tbody id="watchlist-clubs-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== AUCTIONS PAGE ===== -->
+<div id="page-auctions" class="page">
+  <div class="page-header">
+    <h2>Encheres</h2>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>Configurer une alerte</h3></div>
+    <div class="form-row">
+      <input type="text" id="alert-slug" placeholder="Slug du joueur" style="flex:1;min-width:160px">
+      <select id="alert-rarity">
+        <option value="super_rare">Super Rare</option>
+        <option value="rare">Rare</option>
+        <option value="unique">Unique</option>
+      </select>
+      <input type="number" id="alert-maxbid" placeholder="Bid max E" style="width:120px">
+      <button class="btn btn-primary" onclick="addAuctionAlert()">Configurer</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>Encheres en cours</h3></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Joueur</th><th>Rarete</th><th>Bid actuel</th><th>Bids</th><th>Fin</th></tr></thead>
+        <tbody id="auctions-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>Mes alertes encheres</h3></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Joueur</th><th>Rarete</th><th>Bid max</th></tr></thead>
+        <tbody id="auction-alerts-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== OPPORTUNITIES PAGE ===== -->
+<div id="page-opportunities" class="page">
+  <div class="page-header">
+    <h2>Opportunites de marche</h2>
+  </div>
+
+  <div class="kpi-grid" id="kpi-opps"></div>
+
+  <div class="card">
+    <div class="card-header"><h3>Opportunites actives</h3></div>
+    <div id="opps-list"></div>
+  </div>
+</div>
+
+<!-- ===== JOUER PAGE ===== -->
+<div id="page-play" class="page">
+  <div class="page-header">
+    <h2>Jouer</h2>
+    <div class="actions">
+      <select id="play-league-filter" onchange="renderPlay()" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-size:0.85rem">
+        <option value="">Toutes les ligues</option>
+        <option value="Ligue 1">Ligue 1</option>
+        <option value="Premier League">Premier League</option>
+        <option value="LaLiga">LaLiga</option>
+        <option value="Bundesliga">Bundesliga</option>
+        <option value="Eredivisie">Eredivisie</option>
+        <option value="Jupiler Pro">Jupiler Pro</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="kpi-grid" id="kpi-play"></div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header"><h3>Composer une lineup</h3></div>
+      <div class="form-row">
+        <input type="number" id="lineup-gw" placeholder="N GW" style="width:90px">
+        <select id="lineup-league">
+          <option value="Ligue 1">Ligue 1</option>
+          <option value="Premier League">Premier League</option>
+          <option value="LaLiga">LaLiga</option>
+          <option value="Bundesliga">Bundesliga</option>
+          <option value="Eredivisie">Eredivisie</option>
+          <option value="Jupiler Pro">Jupiler Pro</option>
+        </select>
+      </div>
+      <div class="lineup-pitch">
+        <div class="lineup-slots" id="lineup-slots">
+          <div class="lineup-slot" onclick="pickCard(0)"><div class="slot-label">Gardien</div><div class="slot-name" id="slot-0-name">+</div></div>
+          <div class="lineup-slot" onclick="pickCard(1)"><div class="slot-label">Defenseur</div><div class="slot-name" id="slot-1-name">+</div></div>
+          <div class="lineup-slot" onclick="pickCard(2)"><div class="slot-label">Milieu</div><div class="slot-name" id="slot-2-name">+</div></div>
+          <div class="lineup-slot" onclick="pickCard(3)"><div class="slot-label">Attaquant</div><div class="slot-name" id="slot-3-name">+</div></div>
+          <div class="lineup-slot" onclick="pickCard(4)"><div class="slot-label">Extra</div><div class="slot-name" id="slot-4-name">+</div></div>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="saveLineup()" style="width:100%">Sauvegarder la lineup</button>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3>Enregistrer un resultat</h3></div>
+      <div class="form-row">
+        <input type="number" id="result-gw" placeholder="N GW" style="width:90px">
+        <select id="result-league">
+          <option value="Ligue 1">Ligue 1</option>
+          <option value="Premier League">Premier League</option>
+          <option value="LaLiga">LaLiga</option>
+          <option value="Bundesliga">Bundesliga</option>
+          <option value="Eredivisie">Eredivisie</option>
+          <option value="Jupiler Pro">Jupiler Pro</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <input type="number" id="result-rank" placeholder="Classement" style="width:120px">
+        <input type="number" id="result-score" placeholder="Score total" step="0.1" style="width:120px">
+        <input type="number" id="result-reward" placeholder="Reward E" style="width:120px">
+        <input type="number" id="result-participants" placeholder="Participants" style="width:120px">
+      </div>
+      <button class="btn btn-primary" onclick="saveResult()" style="width:100%">Enregistrer le resultat</button>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header"><h3>Historique des resultats</h3></div>
+      <div id="play-results"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Performance par ligue</h3></div>
+      <div class="chart-container"><canvas id="chart-play-rewards"></canvas></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>Evolution des scores</h3></div>
+    <div class="chart-container"><canvas id="chart-play-scores"></canvas></div>
+  </div>
+</div>
+
+<!-- ===== MARCHE DES TRANSFERTS PAGE ===== -->
+<div id="page-market" class="page">
+  <div class="page-header">
+    <h2>Marche des transferts</h2>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="triggerScan()">Scanner le marche</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>Rechercher</h3></div>
+    <div class="search-bar">
+      <input type="text" id="market-search" placeholder="Rechercher un joueur..." onkeyup="if(event.key==='Enter')searchMarket()">
+      <select id="market-rarity">
+        <option value="">Toutes raretes</option>
+        <option value="super_rare">Super Rare</option>
+        <option value="rare">Rare</option>
+        <option value="unique">Unique</option>
+      </select>
+      <input type="number" id="market-min-price" placeholder="Prix min E" style="width:110px">
+      <input type="number" id="market-max-price" placeholder="Prix max E" style="width:110px">
+      <button class="btn btn-primary" onclick="searchMarket()">Rechercher</button>
+      <button class="btn btn-secondary" onclick="clearMarketSearch()">Reset</button>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <h3>Listings disponibles</h3>
+        <span class="text-muted" id="market-count">-</span>
+      </div>
+      <div id="market-listings" style="max-height:600px;overflow-y:auto">
+        <div class="loading"><div class="spinner"></div></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="card-header"><h3>Ventes recentes</h3></div>
+        <div id="market-recent-sales" style="max-height:350px;overflow-y:auto">
+          <div class="loading"><div class="spinner"></div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3>Distribution des prix</h3></div>
+        <div class="chart-container"><canvas id="chart-market-prices"></canvas></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== RENTABILITE PAGE ===== -->
+<div id="page-profitability" class="page">
+  <div class="page-header">
+    <h2>Rentabilite</h2>
+  </div>
+
+  <div class="kpi-grid" id="kpi-profit"></div>
+
+  <div class="grid-3" id="profit-big-metrics"></div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header"><h3>P&L mensuel</h3></div>
+      <div class="chart-container"><canvas id="chart-monthly-pnl"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Repartition par rarete</h3></div>
+      <div class="chart-container"><canvas id="chart-rarity-split"></canvas></div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header"><h3>Meilleurs trades</h3></div>
+      <div id="best-trades"></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Pires trades</h3></div>
+      <div id="worst-trades"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>Historique complet des ventes</h3></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Joueur</th><th>Rarete</th><th>Achat</th><th>Vente</th><th>P&L</th><th>P&L %</th><th>Date vente</th></tr></thead>
+        <tbody id="profit-all-trades-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== REWARDS PAGE ===== -->
+<div id="page-rewards" class="page">
+  <div class="page-header"><h2>Configuration Rewards</h2></div>
+  <div class="card">
+    <div class="card-header"><h3>Paliers de recompenses par ligue</h3></div>
+    <div id="rewards-content"></div>
+  </div>
+</div>
+
+<!-- ===== SETTINGS PAGE ===== -->
+<div id="page-settings" class="page">
+  <div class="page-header"><h2>Parametres</h2></div>
+  <div class="card" id="settings-content">
+    <div class="loading"><div class="spinner"></div></div>
+  </div>
+</div>
+
+</main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+//                    STATE & CONFIG
+// ============================================================
+
+let state = {
+  status: null,
+  watchlist: { players: [], clubs: [] },
+  portfolio: { portfolio: [], stats: { active: { count: 0, total_invested: 0 }, sold: { count: 0, total_pnl: 0 } } },
+  ev: null,
+  evHistory: [],
+  gameweeks: [],
+  edge: [],
+  auctions: [],
+  auctionAlerts: [],
+  opportunities: [],
+  rewards: [],
+  playStats: { total: { count: 0, total_rewards: 0 }, byLeague: [], bestResult: null },
+  playResults: [],
+  marketListings: [],
+  recentSales: [],
+  profitability: null,
+};
+
+let lineupCards = [null, null, null, null, null];
+
+let charts = {};
+const REFRESH_INTERVAL = 30000;
+const LEAGUE_COLORS = {
+  'Ligue 1': '#7c3aed',
+  'Premier League': '#3b82f6',
+  'LaLiga': '#ef4444',
+  'Bundesliga': '#f59e0b',
+  'Eredivisie': '#f97316',
+  'Jupiler Pro': '#10b981',
+  'Challenger': '#6366f1',
+  'Contender': '#8b5cf6',
+};
+
+// ============================================================
+//                    API
+// ============================================================
+
+async function api(method, url, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error('API error: ' + res.status);
+  return res.json();
+}
+
+async function loadAll() {
+  try {
+    const [status, watchlist, portfolio, evData, evHistory, gameweeks, edge, auctions, auctionAlerts, opportunities, rewards, playStats, playResults, marketListings, recentSales, profitability] = await Promise.all([
+      api('GET', '/api/status'),
+      api('GET', '/api/watchlist'),
+      api('GET', '/api/portfolio'),
+      api('GET', '/api/ev'),
+      api('GET', '/api/ev/history'),
+      api('GET', '/api/gameweek'),
+      api('GET', '/api/edge'),
+      api('GET', '/api/auctions'),
+      api('GET', '/api/auction-alerts'),
+      api('GET', '/api/opportunities'),
+      api('GET', '/api/rewards'),
+      api('GET', '/api/play/stats'),
+      api('GET', '/api/play/results'),
+      api('GET', '/api/market/listings'),
+      api('GET', '/api/market/recent-sales'),
+      api('GET', '/api/profitability'),
+    ]);
+
+    state = { status, watchlist, portfolio, ev: evData, evHistory, gameweeks, edge, auctions, auctionAlerts, opportunities, rewards, playStats, playResults, marketListings, recentSales, profitability };
+    lineupCards = [null, null, null, null, null];
+    renderAll();
+    document.getElementById('last-refresh').textContent = new Date().toLocaleTimeString('fr-FR');
+  } catch (e) {
+    console.error('Load error:', e);
+  }
+}
+
+// ============================================================
+//                    NAVIGATION
+// ============================================================
+
+function navigate(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  event.target.closest('.nav-item').classList.add('active');
+  document.querySelector('.sidebar').classList.remove('open');
+}
+
+// ============================================================
+//                    RENDERING
+// ============================================================
+
+function renderAll() {
+  renderOverviewKPIs();
+  renderOverviewCharts();
+  renderOverviewOpps();
+  renderOverviewAuctions();
+  renderEV();
+  renderEdge();
+  renderPortfolio();
+  renderWatchlist();
+  renderAuctions();
+  renderOpportunities();
+  renderRewards();
+  renderSettings();
+  renderPlay();
+  renderMarket();
+  renderProfitability();
+}
+
+function rarityBadge(rarity) {
+  const cls = { 'super_rare': 'badge-sr', 'rare': 'badge-rare', 'unique': 'badge-unique', 'limited': 'badge-limited' }[rarity] || 'badge-sr';
+  return '<span class="badge ' + cls + '">' + (rarity || '').replace('_', ' ') + '</span>';
+}
+
+function pnlDisplay(val, showSign) {
+  if (val === null || val === undefined) return '<span class="text-muted">-</span>';
+  const cls = val > 0 ? 'text-green' : val < 0 ? 'text-red' : 'text-secondary';
+  return '<span class="' + cls + ' fw-600">' + (showSign && val > 0 ? '+' : '') + val.toFixed(0) + 'E</span>';
+}
+
+function renderOverviewKPIs() {
+  const p = state.portfolio;
+  let unrealized = 0;
+  (p.portfolio || []).forEach(c => {
+    const val = c.latest_floor || c.current_value || c.buy_price || 0;
+    unrealized += val - (c.buy_price || 0);
+  });
+
+  const totalCards = (p.portfolio || []).length;
+  const invested = p.stats?.active?.total_invested || 0;
+  const realizedPnL = p.stats?.sold?.total_pnl || 0;
+  const bestLeague = state.ev?.bestLeague || '-';
+  const bestEV = state.ev?.leagues?.length > 0 ? state.ev.leagues[0] : null;
+
+  document.getElementById('kpi-overview').innerHTML =
+    kpiCard('Portfolio', totalCards + ' cartes', invested.toFixed(0) + 'E investis') +
+    kpiCard('P&L Latent', (unrealized >= 0 ? '+' : '') + unrealized.toFixed(0) + 'E', '', unrealized) +
+    kpiCard('P&L Realise', (realizedPnL >= 0 ? '+' : '') + realizedPnL.toFixed(0) + 'E', (p.stats?.sold?.count || 0) + ' ventes', realizedPnL) +
+    kpiCard('Meilleure Ligue', bestLeague, bestEV ? 'EV: ' + (bestEV.evAdjusted || bestEV.ev_adjusted || 0).toFixed(1) + 'E' : '') +
+    kpiCard('Watchlist', (state.watchlist.players?.length || 0) + (state.watchlist.clubs?.length || 0) + ' items', '') +
+    kpiCard('Opportunites', (state.opportunities || []).length + ' actives', '', null, true) +
+    kpiCard('Encheres', (state.auctions || []).length + ' en cours', '') +
+    kpiCard('Scans', state.status?.totalScans || 0, state.status?.lastScan ? 'Dernier: ' + new Date(state.status.lastScan).toLocaleTimeString('fr-FR') : '');
+}
+
+function kpiCard(label, value, sub, pnlVal, isAccent) {
+  let cls = '';
+  if (pnlVal !== undefined && pnlVal !== null) cls = pnlVal > 0 ? 'positive' : pnlVal < 0 ? 'negative' : '';
+  if (isAccent) cls = 'accent';
+  return '<div class="kpi"><div class="kpi-label">' + label + '</div><div class="kpi-value ' + cls + '">' + value + '</div>' + (sub ? '<div class="kpi-sub">' + sub + '</div>' : '') + '</div>';
+}
+
+function renderOverviewCharts() {
+  // EV Overview chart
+  if (state.ev && state.ev.leagues && state.ev.leagues.length > 0) {
+    const leagues = state.ev.leagues;
+    const labels = leagues.map(l => l.league);
+    const evBase = leagues.map(l => l.evBase || l.ev_base || 0);
+    const evAdj = leagues.map(l => l.evAdjusted || l.ev_adjusted || 0);
+    const colors = labels.map(l => LEAGUE_COLORS[l] || '#7c3aed');
+
+    createBarChart('chart-ev-overview', {
+      labels,
+      datasets: [
+        { label: 'EV Base', data: evBase, backgroundColor: colors.map(c => c + '66'), borderColor: colors, borderWidth: 1 },
+        { label: 'EV Ajuste', data: evAdj, backgroundColor: colors, borderColor: colors, borderWidth: 0 },
+      ]
+    }, 'EV (EUR)');
+  }
+
+  // Portfolio P&L chart
+  const portfolio = state.portfolio?.portfolio || [];
+  if (portfolio.length > 0) {
+    const labels = portfolio.map(c => (c.player_name || c.player_slug || '').substring(0, 12));
+    const pnls = portfolio.map(c => {
+      const val = c.latest_floor || c.current_value || c.buy_price || 0;
+      return val - (c.buy_price || 0);
+    });
+    const colors = pnls.map(v => v >= 0 ? '#10b981' : '#ef4444');
+
+    createBarChart('chart-portfolio-overview', {
+      labels,
+      datasets: [{ label: 'P&L', data: pnls, backgroundColor: colors, borderRadius: 4 }]
+    }, 'P&L (EUR)');
+  }
+}
+
+function createBarChart(canvasId, data, yLabel) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  if (charts[canvasId]) charts[canvasId].destroy();
+
+  charts[canvasId] = new Chart(canvas, {
+    type: 'bar',
+    data,
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#8888aa', font: { size: 11 } } } },
+      scales: {
+        x: { ticks: { color: '#8888aa', font: { size: 10 } }, grid: { color: '#252560' } },
+        y: { title: { display: true, text: yLabel, color: '#555577' }, ticks: { color: '#8888aa' }, grid: { color: '#252560' } },
+      }
+    }
+  });
+}
+
+function renderOverviewOpps() {
+  const opps = (state.opportunities || []).slice(0, 5);
+  if (opps.length === 0) {
+    document.getElementById('overview-opps').innerHTML = '<div class="text-muted" style="padding:20px;text-align:center">Aucune opportunite detectee</div>';
+    return;
+  }
+  document.getElementById('overview-opps').innerHTML = opps.map(oppCardHTML).join('');
+}
+
+function renderOverviewAuctions() {
+  const aucs = (state.auctions || []).slice(0, 5);
+  if (aucs.length === 0) {
+    document.getElementById('overview-auctions').innerHTML = '<div class="text-muted" style="padding:20px;text-align:center">Aucune enchere active</div>';
+    return;
+  }
+  document.getElementById('overview-auctions').innerHTML = aucs.map(a =>
+    '<div style="display:flex;align-items:center;gap:10px;padding:10px;border-bottom:1px solid #25256044">' +
+    '<span class="fw-600">' + (a.player_name || a.card_slug) + '</span>' +
+    rarityBadge(a.rarity) +
+    '<span class="text-green fw-700 mono" style="margin-left:auto">' + (a.current_bid || '?') + ' E</span>' +
+    '<span class="text-muted">' + (a.nb_bids || 0) + ' bids</span>' +
+    '</div>'
+  ).join('');
+}
+
+// === EV ===
+
+function renderEV() {
+  const evData = state.ev;
+  if (!evData || !evData.leagues || evData.leagues.length === 0) {
+    document.getElementById('ev-tbody').innerHTML = '<tr><td colspan="7" class="text-muted" style="text-align:center;padding:20px">Pas de donnees EV. Enregistre une GW ci-dessus.</td></tr>';
+    return;
+  }
+
+  const edges = state.edge || [];
+  document.getElementById('ev-tbody').innerHTML = evData.leagues.map((l, i) => {
+    const isBest = l.league === evData.bestLeague;
+    const edge = edges.find(e => e.league === l.league);
+    const edgeVal = edge ? edge.edge_multiplier : 1.0;
+    return '<tr class="' + (isBest ? 'highlight' : '') + '">' +
+      '<td>' + (isBest ? '<span class="badge badge-yellow">BEST</span>' : (i + 1)) + '</td>' +
+      '<td class="fw-600">' + l.league + '</td>' +
+      '<td class="mono">' + (l.participants || 0) + '</td>' +
+      '<td class="mono">' + (l.cashPool || l.total_cash_pool || 0).toFixed(0) + ' E</td>' +
+      '<td class="mono">' + (l.evBase || l.ev_base || 0).toFixed(1) + ' E</td>' +
+      '<td class="mono text-green fw-700">' + (l.evAdjusted || l.ev_adjusted || 0).toFixed(1) + ' E</td>' +
+      '<td class="mono text-accent">x' + edgeVal.toFixed(1) + '</td>' +
+    '</tr>';
+  }).join('');
+
+  // EV History chart
+  renderEVHistoryChart();
+  renderParticipantsChart();
+}
+
+function renderEVHistoryChart() {
+  const gws = state.gameweeks || [];
+  if (gws.length === 0) return;
+
+  // Group by league
+  const leagues = {};
+  gws.forEach(g => {
+    if (!leagues[g.league]) leagues[g.league] = [];
+    leagues[g.league].push(g);
+  });
+
+  // Get rewards for EV calculation
+  const rewards = state.rewards || [];
+  function getCashPool(league) {
+    let total = 0;
+    rewards.filter(r => r.league === league).forEach(r => {
+      total += r.reward * (r.place_to - r.place_from + 1);
+    });
+    return total;
+  }
+
+  const datasets = Object.entries(leagues).map(([league, data]) => {
+    data.sort((a, b) => a.gw_number - b.gw_number);
+    const pool = getCashPool(league);
+    return {
+      label: league,
+      data: data.map(d => ({ x: d.gw_number, y: pool > 0 ? pool / d.participants : 0 })),
+      borderColor: LEAGUE_COLORS[league] || '#7c3aed',
+      backgroundColor: 'transparent',
+      tension: 0.3,
+      pointRadius: 3,
+      borderWidth: 2,
+    };
+  });
+
+  const canvas = document.getElementById('chart-ev-history');
+  if (!canvas) return;
+  if (charts['chart-ev-history']) charts['chart-ev-history'].destroy();
+
+  charts['chart-ev-history'] = new Chart(canvas, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#8888aa', font: { size: 10 } } } },
+      scales: {
+        x: { type: 'linear', title: { display: true, text: 'GW', color: '#555577' }, ticks: { color: '#8888aa' }, grid: { color: '#252560' } },
+        y: { title: { display: true, text: 'EV (EUR)', color: '#555577' }, ticks: { color: '#8888aa' }, grid: { color: '#252560' } },
+      }
+    }
+  });
+}
+
+function renderParticipantsChart() {
+  const gws = state.gameweeks || [];
+  if (gws.length === 0) return;
+
+  const leagues = {};
+  gws.forEach(g => {
+    if (!leagues[g.league]) leagues[g.league] = [];
+    leagues[g.league].push(g);
+  });
+
+  const datasets = Object.entries(leagues).map(([league, data]) => {
+    data.sort((a, b) => a.gw_number - b.gw_number);
+    return {
+      label: league,
+      data: data.map(d => ({ x: d.gw_number, y: d.participants })),
+      borderColor: LEAGUE_COLORS[league] || '#7c3aed',
+      backgroundColor: 'transparent',
+      tension: 0.3,
+      pointRadius: 3,
+      borderWidth: 2,
+    };
+  });
+
+  const canvas = document.getElementById('chart-participants');
+  if (!canvas) return;
+  if (charts['chart-participants']) charts['chart-participants'].destroy();
+
+  charts['chart-participants'] = new Chart(canvas, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#8888aa', font: { size: 10 } } } },
+      scales: {
+        x: { type: 'linear', title: { display: true, text: 'GW', color: '#555577' }, ticks: { color: '#8888aa' }, grid: { color: '#252560' } },
+        y: { title: { display: true, text: 'Participants', color: '#555577' }, ticks: { color: '#8888aa' }, grid: { color: '#252560' } },
+      }
+    }
+  });
+}
+
+function renderEdge() {
+  const edges = state.edge || [];
+  document.getElementById('edge-tbody').innerHTML = edges.map(e => {
+    const level = e.edge_multiplier < 0.9 ? 'Desavantage' :
+      e.edge_multiplier < 1.1 ? 'Neutre' :
+      e.edge_multiplier < 1.3 ? 'Tu suis' :
+      e.edge_multiplier < 1.5 ? 'Connais les compos' : 'Expert';
+    const cls = e.edge_multiplier > 1.1 ? 'text-green' : e.edge_multiplier < 0.9 ? 'text-red' : 'text-secondary';
+    return '<tr><td class="fw-600">' + e.league + '</td><td class="mono ' + cls + ' fw-600">x' + e.edge_multiplier.toFixed(1) + '</td><td>' + level + '</td></tr>';
+  }).join('');
+}
+
+// === PORTFOLIO ===
+
+function renderPortfolio() {
+  const p = state.portfolio;
+  const portfolio = p?.portfolio || [];
+  const stats = p?.stats || { active: { count: 0, total_invested: 0 }, sold: { count: 0, total_pnl: 0, total_revenue: 0, total_cost: 0 } };
+
+  let unrealized = 0;
+  let totalValue = 0;
+  portfolio.forEach(c => {
+    const val = c.latest_floor || c.current_value || c.buy_price || 0;
+    totalValue += val;
+    unrealized += val - (c.buy_price || 0);
+  });
+
+  const roi = stats.active.total_invested > 0 ? (unrealized / stats.active.total_invested * 100) : 0;
+
+  document.getElementById('kpi-portfolio').innerHTML =
+    kpiCard('Cartes', portfolio.length, '') +
+    kpiCard('Investissement', stats.active.total_invested.toFixed(0) + 'E', '') +
+    kpiCard('Valeur actuelle', totalValue.toFixed(0) + 'E', '') +
+    kpiCard('P&L latent', (unrealized >= 0 ? '+' : '') + unrealized.toFixed(0) + 'E', 'ROI: ' + roi.toFixed(1) + '%', unrealized) +
+    kpiCard('P&L realise', (stats.sold.total_pnl >= 0 ? '+' : '') + stats.sold.total_pnl.toFixed(0) + 'E', stats.sold.count + ' ventes', stats.sold.total_pnl);
+
+  if (portfolio.length === 0) {
+    document.getElementById('portfolio-tbody').innerHTML = '<tr><td colspan="8" class="text-muted" style="text-align:center;padding:20px">Portfolio vide. Ajoute des cartes ci-dessus.</td></tr>';
+    return;
+  }
+
+  document.getElementById('portfolio-tbody').innerHTML = portfolio.map(c => {
+    const val = c.latest_floor || c.current_value || c.buy_price || 0;
+    const pnl = val - (c.buy_price || 0);
+    const pnlPct = c.buy_price ? (pnl / c.buy_price * 100) : 0;
+    return '<tr>' +
+      '<td class="fw-600">' + (c.player_name || c.player_slug) + '</td>' +
+      '<td>' + rarityBadge(c.rarity) + '</td>' +
+      '<td class="mono">' + (c.buy_price || '?') + ' E</td>' +
+      '<td class="mono fw-600">' + val.toFixed(0) + ' E</td>' +
+      '<td>' + pnlDisplay(pnl, true) + '</td>' +
+      '<td><span class="' + (pnlPct >= 0 ? 'text-green' : 'text-red') + ' fw-600">' + (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(0) + '%</span></td>' +
+      '<td class="text-muted">' + (c.buy_type || '-') + '</td>' +
+      '<td><button class="btn btn-danger btn-sm" onclick="sellCard(\'' + c.card_slug + '\')">Vendre</button></td>' +
+    '</tr>';
+  }).join('');
+}
+
+// === WATCHLIST ===
+
+function renderWatchlist() {
+  const players = state.watchlist?.players || [];
+  const clubs = state.watchlist?.clubs || [];
+
+  document.getElementById('watchlist-players-tbody').innerHTML = players.length === 0 ?
+    '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:20px">Aucun joueur</td></tr>' :
+    players.map(p => {
+      return '<tr>' +
+        '<td class="fw-600">' + p.name + '</td>' +
+        '<td>' + rarityBadge(p.rarity) + '</td>' +
+        '<td class="mono text-green fw-600">-</td>' +
+        '<td class="mono">-</td>' +
+        '<td>' + (p.max_price ? '<span class="mono">' + p.max_price + ' E</span>' : '<span class="text-muted">-</span>') + '</td>' +
+        '<td><button class="btn btn-danger btn-sm" onclick="removePlayer(\'' + p.slug + '\')">X</button></td>' +
+      '</tr>';
+    }).join('');
+
+  document.getElementById('watchlist-clubs-tbody').innerHTML = clubs.length === 0 ?
+    '<tr><td colspan="4" class="text-muted" style="text-align:center;padding:20px">Aucun club</td></tr>' :
+    clubs.map(c => {
+      return '<tr>' +
+        '<td class="fw-600">' + c.name + '</td>' +
+        '<td>' + rarityBadge(c.rarity) + '</td>' +
+        '<td>' + (c.max_price ? '<span class="mono">' + c.max_price + ' E</span>' : '<span class="text-muted">-</span>') + '</td>' +
+        '<td><button class="btn btn-danger btn-sm" onclick="removeClub(\'' + c.slug + '\')">X</button></td>' +
+      '</tr>';
+    }).join('');
+}
+
+// === AUCTIONS ===
+
+function renderAuctions() {
+  const aucs = state.auctions || [];
+  const alerts = state.auctionAlerts || [];
+
+  document.getElementById('auctions-tbody').innerHTML = aucs.length === 0 ?
+    '<tr><td colspan="5" class="text-muted" style="text-align:center;padding:20px">Aucune enchere active</td></tr>' :
+    aucs.map(a =>
+      '<tr>' +
+      '<td class="fw-600">' + (a.player_name || a.card_slug) + '</td>' +
+      '<td>' + rarityBadge(a.rarity) + '</td>' +
+      '<td class="mono text-green fw-700">' + (a.current_bid || '?') + ' E</td>' +
+      '<td class="mono">' + (a.nb_bids || 0) + '</td>' +
+      '<td class="text-muted">' + (a.end_time ? new Date(a.end_time).toLocaleString('fr-FR') : '-') + '</td>' +
+      '</tr>'
+    ).join('');
+
+  document.getElementById('auction-alerts-tbody').innerHTML = alerts.length === 0 ?
+    '<tr><td colspan="3" class="text-muted" style="text-align:center;padding:20px">Aucune alerte</td></tr>' :
+    alerts.map(a =>
+      '<tr><td class="fw-600">' + a.slug + '</td><td>' + rarityBadge(a.rarity) + '</td><td class="mono fw-600">' + a.max_bid + ' E</td></tr>'
+    ).join('');
+}
+
+// === OPPORTUNITIES ===
+
+function oppCardHTML(o) {
+  const typeInfo = {
+    'undervalued_vs_avg': { icon: '\uD83D\uDCB0', label: 'Sous-evalue', cls: '' },
+    'floor_dip': { icon: '\uD83D\uDCC9', label: 'Floor bas', cls: '' },
+    'statistical_anomaly': { icon: '\u26A0\uFE0F', label: 'Anomalie', cls: 'anomaly' },
+    'auction_below_threshold': { icon: '\uD83D\uDD14', label: 'Enchere', cls: 'auction' },
+    'auction_vs_market': { icon: '\uD83C\uDFAF', label: 'Enchere vs Marche', cls: 'auction' },
+  }[o.opportunity_type] || { icon: '\uD83D\uDCA1', label: o.opportunity_type, cls: '' };
+
+  return '<div class="opp-card ' + typeInfo.cls + '">' +
+    '<div class="opp-header">' +
+    '<span class="opp-name">' + typeInfo.icon + ' ' + (o.player_name || o.slug) + '</span>' +
+    rarityBadge(o.rarity) +
+    '<span class="badge badge-green">' + typeInfo.label + '</span>' +
+    '<span class="opp-score">Score ' + (o.score || 0).toFixed(0) + '</span>' +
+    '</div>' +
+    '<div class="opp-detail">' + (o.details || '') + '</div>' +
+  '</div>';
+}
+
+function renderOpportunities() {
+  const opps = state.opportunities || [];
+
+  const types = {};
+  opps.forEach(o => {
+    types[o.opportunity_type] = (types[o.opportunity_type] || 0) + 1;
+  });
+
+  document.getElementById('kpi-opps').innerHTML =
+    kpiCard('Total', opps.length + ' actives', '', null, true) +
+    kpiCard('Sous-evalues', (types['undervalued_vs_avg'] || 0).toString(), '') +
+    kpiCard('Floor dips', (types['floor_dip'] || 0).toString(), '') +
+    kpiCard('Encheres', ((types['auction_below_threshold'] || 0) + (types['auction_vs_market'] || 0)).toString(), '');
+
+  if (opps.length === 0) {
+    document.getElementById('opps-list').innerHTML = '<div class="text-muted" style="padding:30px;text-align:center">Aucune opportunite detectee. Les opportunites apparaitront apres plusieurs scans.</div>';
+    return;
+  }
+
+  document.getElementById('opps-list').innerHTML = opps.map(oppCardHTML).join('');
+}
+
+// === REWARDS ===
+
+function renderRewards() {
+  const rewards = state.rewards || [];
+  if (rewards.length === 0) {
+    document.getElementById('rewards-content').innerHTML = '<div class="text-muted" style="padding:20px;text-align:center">Aucune config</div>';
+    return;
+  }
+
+  const grouped = {};
+  rewards.forEach(r => {
+    if (!grouped[r.league]) grouped[r.league] = [];
+    grouped[r.league].push(r);
+  });
+
+  let html = '';
+  for (const [league, rws] of Object.entries(grouped)) {
+    const totalPool = rws.reduce((sum, r) => sum + r.reward * (r.place_to - r.place_from + 1), 0);
+    html += '<div style="margin-bottom:16px">';
+    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">';
+    html += '<span class="fw-700">' + league + '</span>';
+    html += '<span class="badge badge-green">' + totalPool.toFixed(0) + ' E</span>';
+    html += '</div>';
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+    rws.forEach(r => {
+      const label = r.place_from === r.place_to ? r.place_from + 'e' : r.place_from + '-' + r.place_to + 'e';
+      html += '<span style="background:var(--bg-input);padding:4px 10px;border-radius:6px;font-size:0.82rem"><span class="text-muted">' + label + ':</span> <span class="mono fw-600">' + r.reward + 'E</span></span>';
+    });
+    html += '</div></div>';
+  }
+
+  document.getElementById('rewards-content').innerHTML = html;
+}
+
+// === SETTINGS ===
+
+function renderSettings() {
+  const s = state.status || {};
+  document.getElementById('settings-content').innerHTML =
+    '<div style="display:grid;gap:12px">' +
+    settingRow('Base de donnees', 'SQLite (persistant)') +
+    settingRow('Dernier scan marche', s.lastScan ? new Date(s.lastScan).toLocaleString('fr-FR') : '-') +
+    settingRow('Total scans', (s.totalScans || 0).toString()) +
+    settingRow('Alertes envoyees', (s.alertsSent || 0).toString()) +
+    settingRow('Watchlist', (s.watchlist?.players || 0) + ' joueurs, ' + (s.watchlist?.clubs || 0) + ' clubs') +
+    settingRow('Portfolio', (s.portfolio?.active?.count || 0) + ' cartes actives') +
+    '</div>';
+}
+
+function settingRow(label, value) {
+  return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">' +
+    '<span class="text-secondary">' + label + '</span>' +
+    '<span class="fw-600">' + value + '</span>' +
+  '</div>';
+}
+
+// ============================================================
+//                    ACTIONS
+// ============================================================
+
+function toast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type || 'success');
+  setTimeout(() => t.className = 'toast', 3000);
+}
+
+async function triggerScan() {
+  toast('Scan en cours...', 'info');
+  try {
+    await api('POST', '/api/scan');
+    setTimeout(loadAll, 5000);
+  } catch (e) { toast('Erreur', 'error'); }
+}
+
+async function addPlayer() {
+  const slug = document.getElementById('player-slug').value.trim();
+  const rarity = document.getElementById('player-rarity').value;
+  const maxPrice = document.getElementById('player-maxprice').value;
+  if (!slug) { toast('Entre un slug', 'error'); return; }
+  try {
+    await api('POST', '/api/watchlist/player', { slug, rarity, maxPrice: maxPrice ? parseFloat(maxPrice) : null });
+    toast('Joueur ajoute!');
+    document.getElementById('player-slug').value = '';
+    document.getElementById('player-maxprice').value = '';
+    loadAll();
+  } catch (e) { toast('Erreur', 'error'); }
+}
+
+async function addClub() {
+  const slug = document.getElementById('club-slug').value.trim();
+  const rarity = document.getElementById('club-rarity').value;
+  const maxPrice = document.getElementById('club-maxprice').value;
+  if (!slug) { toast('Entre un slug', 'error'); return; }
+  try {
+    await api('POST', '/api/watchlist/club', { slug, rarity, maxPrice: maxPrice ? parseFloat(maxPrice) : null });
+    toast('Club ajoute!');
+    document.getElementById('club-slug').value = '';
+    loadAll();
+  } catch (e) { toast('Erreur', 'error'); }
+}
+
+async function removePlayer(slug) {
+  if (!confirm('Supprimer?')) return;
+  try { await api('DELETE', '/api/watchlist/player/' + slug); toast('Supprime'); loadAll(); }
+  catch (e) { toast('Erreur', 'error'); }
+}
+
+async function removeClub(slug) {
+  if (!confirm('Supprimer?')) return;
+  try { await api('DELETE', '/api/watchlist/club/' + slug); toast('Supprime'); loadAll(); }
+  catch (e) { toast('Erreur', 'error'); }
+}
+
+async function addCard() {
+  const slug = document.getElementById('card-slug').value.trim();
+  const rarity = document.getElementById('card-rarity').value;
+  const price = document.getElementById('card-price').value;
+  const type = document.getElementById('card-type').value;
+  if (!slug || !price) { toast('Remplis les champs', 'error'); return; }
+  try {
+    await api('POST', '/api/portfolio', { playerSlug: slug, rarity, buyPrice: parseFloat(price), buyType: type });
+    toast('Carte ajoutee!');
+    document.getElementById('card-slug').value = '';
+    document.getElementById('card-price').value = '';
+    loadAll();
+  } catch (e) { toast('Erreur', 'error'); }
+}
+
+async function sellCard(cardSlug) {
+  const price = prompt('Prix de vente (EUR):');
+  if (!price) return;
+  try {
+    await api('POST', '/api/portfolio/sell', { cardSlug, sellPrice: parseFloat(price) });
+    toast('Carte vendue!');
+    loadAll();
+  } catch (e) { toast('Erreur', 'error'); }
+}
+
+async function addGW() {
+  const gw = document.getElementById('gw-number').value;
+  const league = document.getElementById('gw-league').value;
+  const participants = document.getElementById('gw-participants').value;
+  if (!gw || !participants) { toast('Remplis GW et participants', 'error'); return; }
+  try {
+    await api('POST', '/api/gameweek', { gwNumber: parseInt(gw), league, participants: parseInt(participants) });
+    toast('GW enregistree!');
+    document.getElementById('gw-participants').value = '';
+    loadAll();
+  } catch (e) { toast('Erreur', 'error'); }
+}
+
+async function setEdge() {
+  const league = document.getElementById('edge-league').value;
+  const val = document.getElementById('edge-value').value;
+  if (!val) { toast('Entre une valeur', 'error'); return; }
+  try {
+    await api('POST', '/api/edge', { league, multiplier: parseFloat(val) });
+    toast('Edge sauvegarde!');
+    document.getElementById('edge-value').value = '';
+    loadAll();
+  } catch (e) { toast('Erreur', 'error'); }
+}
+
+async function addAuctionAlert() {
+  const slug = document.getElementById('alert-slug').value.trim();
+  const rarity = document.getElementById('alert-rarity').value;
+  const maxBid = document.getElementById('alert-maxbid').value;
+  if (!slug || !maxBid) { toast('Remplis les champs', 'error'); return; }
+  try {
+    await api('POST', '/api/auction-alert', { slug, rarity, maxBid: parseFloat(maxBid) });
+    toast('Alerte configuree!');
+    document.getElementById('alert-slug').value = '';
+    document.getElementById('alert-maxbid').value = '';
+    loadAll();
+  } catch (e) { toast('Erreur', 'error'); }
+}
+
+// ============================================================
+//                    JOUER (Play)
+// ============================================================
+
+function renderPlay() {
+  const ps = state.playStats || { total: { count: 0, total_rewards: 0 }, byLeague: [], bestResult: null };
+  const results = state.playResults || [];
+  const leagueFilter = document.getElementById('play-league-filter')?.value || '';
+
+  // KPIs
+  const avgRank = ps.byLeague.length > 0 ? ps.byLeague.reduce((s, l) => s + l.avg_rank * l.gw_played, 0) / Math.max(ps.total.count, 1) : 0;
+  document.getElementById('kpi-play').innerHTML =
+    kpiCard('GW jouees', ps.total.count, '') +
+    kpiCard('Rewards gagnes', ps.total.total_rewards.toFixed(0) + 'E', '', ps.total.total_rewards > 0 ? 1 : null) +
+    kpiCard('Rang moyen', avgRank > 0 ? '#' + avgRank.toFixed(0) : '-', '') +
+    kpiCard('Meilleur result', ps.bestResult ? ps.bestResult.reward_earned.toFixed(0) + 'E' : '-', ps.bestResult ? ps.bestResult.league + ' GW' + ps.bestResult.gw_number : '');
+
+  // Results list
+  const filtered = leagueFilter ? results.filter(r => r.league === leagueFilter) : results;
+  if (filtered.length === 0) {
+    document.getElementById('play-results').innerHTML = '<div class="text-muted" style="padding:20px;text-align:center">Aucun resultat. Enregistre tes resultats de GW ci-dessus.</div>';
+  } else {
+    document.getElementById('play-results').innerHTML = filtered.slice(0, 20).map(r => {
+      const rankCls = r.rank === 1 ? 'gold' : r.rank === 2 ? 'silver' : r.rank === 3 ? 'bronze' : 'normal';
+      return '<div class="result-card">' +
+        '<div class="result-rank ' + rankCls + '">' + (r.rank || '?') + '</div>' +
+        '<div class="result-info">' +
+          '<div class="result-league">' + r.league + '</div>' +
+          '<div class="result-meta">GW ' + r.gw_number + ' | Score: ' + (r.total_score || '?') + ' | ' + (r.participants || '?') + ' participants</div>' +
+        '</div>' +
+        '<div class="result-reward">' +
+          '<div class="reward-value ' + (r.reward_earned > 0 ? 'text-green' : 'text-muted') + '">' + (r.reward_earned > 0 ? '+' + r.reward_earned.toFixed(0) + 'E' : '-') + '</div>' +
+          '<div class="reward-label">reward</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // Rewards by league chart
+  if (ps.byLeague.length > 0) {
+    const labels = ps.byLeague.map(l => l.league);
+    const rewards = ps.byLeague.map(l => l.total_rewards);
+    const colors = labels.map(l => LEAGUE_COLORS[l] || '#7c3aed');
+
+    createBarChart('chart-play-rewards', {
+      labels,
+      datasets: [{ label: 'Rewards (EUR)', data: rewards, backgroundColor: colors, borderRadius: 4 }]
+    }, 'EUR');
+  }
+
+  // Scores evolution chart
+  if (results.length > 0) {
+    const byLeague = {};
+    results.forEach(r => {
+      if (!byLeague[r.league]) byLeague[r.league] = [];
+      byLeague[r.league].push(r);
+    });
+
+    const datasets = Object.entries(byLeague).map(([league, data]) => {
+      data.sort((a, b) => a.gw_number - b.gw_number);
+      return {
+        label: league,
+        data: data.map(d => ({ x: d.gw_number, y: d.total_score || 0 })),
+        borderColor: LEAGUE_COLORS[league] || '#7c3aed',
+        backgroundColor: 'transparent',
+        tension: 0.3,
+        pointRadius: 4,
+        borderWidth: 2,
+      };
+    });
+
+    const canvas = document.getElementById('chart-play-scores');
+    if (canvas) {
+      if (charts['chart-play-scores']) charts['chart-play-scores'].destroy();
+      charts['chart-play-scores'] = new Chart(canvas, {
+        type: 'line',
+        data: { datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#8888aa', font: { size: 10 } } } },
+          scales: {
+            x: { type: 'linear', title: { display: true, text: 'GW', color: '#555577' }, ticks: { color: '#8888aa' }, grid: { color: '#252560' } },
+            y: { title: { display: true, text: 'Score', color: '#555577' }, ticks: { color: '#8888aa' }, grid: { color: '#252560' } },
+          }
+        }
+      });
+    }
+  }
+}
+
+function pickCard(slotIndex) {
+  const portfolio = state.portfolio?.portfolio || [];
+  if (portfolio.length === 0) {
+    toast('Portfolio vide - ajoute des cartes d\'abord', 'error');
+    return;
+  }
+
+  const names = portfolio.map(c => (c.player_name || c.player_slug) + ' (' + c.rarity + ')');
+  const choice = prompt('Choisis une carte (numero):\\n' + names.map((n, i) => (i + 1) + '. ' + n).join('\\n'));
+  if (!choice) return;
+
+  const idx = parseInt(choice) - 1;
+  if (idx >= 0 && idx < portfolio.length) {
+    const card = portfolio[idx];
+    lineupCards[slotIndex] = card;
+    const el = document.getElementById('slot-' + slotIndex + '-name');
+    if (el) el.textContent = (card.player_name || card.player_slug).substring(0, 12);
+    el.closest('.lineup-slot').classList.add('filled');
+  }
+}
+
+async function saveLineup() {
+  const gw = document.getElementById('lineup-gw').value;
+  const league = document.getElementById('lineup-league').value;
+  if (!gw) { toast('Entre le numero de GW', 'error'); return; }
+  const slugs = lineupCards.map(c => c ? c.card_slug : null);
+  try {
+    await api('POST', '/api/play/lineup', { gwNumber: parseInt(gw), league, cardSlugs: slugs });
+    toast('Lineup sauvegardee!');
+  } catch (e) { toast('Erreur', 'error'); }
+}
+
+async function saveResult() {
+  const gw = document.getElementById('result-gw').value;
+  const league = document.getElementById('result-league').value;
+  const rank = document.getElementById('result-rank').value;
+  const score = document.getElementById('result-score').value;
+  const reward = document.getElementById('result-reward').value;
+  const participants = document.getElementById('result-participants').value;
+  if (!gw || !league) { toast('GW et ligue requis', 'error'); return; }
+  try {
+    await api('POST', '/api/play/result', {
+      gwNumber: parseInt(gw),
+      league,
+      rank: rank ? parseInt(rank) : null,
+      totalScore: score ? parseFloat(score) : null,
+      rewardEarned: reward ? parseFloat(reward) : 0,
+      participants: participants ? parseInt(participants) : null,
+    });
+    toast('Resultat enregistre!');
+    document.getElementById('result-rank').value = '';
+    document.getElementById('result-score').value = '';
+    document.getElementById('result-reward').value = '';
+    document.getElementById('result-participants').value = '';
+    loadAll();
+  } catch (e) { toast('Erreur', 'error'); }
+}
+
+// ============================================================
+//                    MARCHE DES TRANSFERTS
+// ============================================================
+
+function renderMarket() {
+  const listings = state.marketListings || [];
+  const sales = state.recentSales || [];
+
+  document.getElementById('market-count').textContent = listings.length + ' joueurs';
+
+  if (listings.length === 0) {
+    document.getElementById('market-listings').innerHTML = '<div class="text-muted" style="padding:20px;text-align:center">Aucun listing. Les donnees apparaitront apres un scan.</div>';
+  } else {
+    document.getElementById('market-listings').innerHTML = listings.map(l => {
+      const name = l.name || l.slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      return '<div class="market-card">' +
+        '<div class="mc-name">' + name + '</div>' +
+        rarityBadge(l.rarity) +
+        '<div class="mc-listings text-muted">' + (l.nb_listings || 0) + ' listings</div>' +
+        '<div class="mc-price mono">' + (l.min_price ? l.min_price.toFixed(0) + ' E' : '-') + '</div>' +
+        '<div style="display:flex;gap:4px">' +
+          '<button class="btn btn-sm btn-secondary" onclick="quickAddWatch(\'' + l.slug + '\',\'' + l.rarity + '\')">+ Watch</button>' +
+          '<button class="btn btn-sm btn-success" onclick="quickBuyCard(\'' + l.slug + '\',\'' + l.rarity + '\',' + (l.min_price || 0) + ')">+ Portfolio</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // Recent sales
+  if (sales.length === 0) {
+    document.getElementById('market-recent-sales').innerHTML = '<div class="text-muted" style="padding:20px;text-align:center">Aucune vente enregistree</div>';
+  } else {
+    document.getElementById('market-recent-sales').innerHTML = sales.slice(0, 20).map(s => {
+      const name = s.player_name || s.slug;
+      const dateStr = s.sale_date ? new Date(s.sale_date).toLocaleDateString('fr-FR') : '-';
+      return '<div class="sale-row">' +
+        '<span class="sale-player">' + name + '</span>' +
+        rarityBadge(s.rarity) +
+        '<span class="sale-type">' + (s.sale_type || '-') + '</span>' +
+        '<span class="sale-price mono">' + (s.price ? s.price.toFixed(0) + ' E' : '-') + '</span>' +
+        '<span class="sale-date">' + dateStr + '</span>' +
+      '</div>';
+    }).join('');
+  }
+
+  // Price distribution chart
+  if (listings.length > 0) {
+    const prices = listings.map(l => l.min_price).filter(p => p != null);
+    const buckets = [0, 10, 25, 50, 100, 200, 500, 1000, 5000];
+    const counts = buckets.map((min, i) => {
+      const max = buckets[i + 1] || Infinity;
+      return prices.filter(p => p >= min && p < max).length;
+    });
+    const labels = buckets.map((min, i) => {
+      const max = buckets[i + 1];
+      return max ? min + '-' + max + 'E' : min + 'E+';
+    });
+
+    createBarChart('chart-market-prices', {
+      labels,
+      datasets: [{ label: 'Joueurs', data: counts, backgroundColor: '#7c3aed88', borderColor: '#7c3aed', borderWidth: 1, borderRadius: 4 }]
+    }, 'Nombre');
+  }
+}
+
+async function searchMarket() {
+  const query = document.getElementById('market-search').value.trim();
+  const rarity = document.getElementById('market-rarity').value;
+  const minPrice = document.getElementById('market-min-price').value;
+  const maxPrice = document.getElementById('market-max-price').value;
+
+  let url = '/api/market/listings?';
+  if (query) url += 'query=' + encodeURIComponent(query) + '&';
+  if (rarity) url += 'rarity=' + rarity + '&';
+  if (minPrice) url += 'minPrice=' + minPrice + '&';
+  if (maxPrice) url += 'maxPrice=' + maxPrice + '&';
+
+  try {
+    state.marketListings = await api('GET', url);
+    renderMarket();
+  } catch (e) { toast('Erreur recherche', 'error'); }
+}
+
+function clearMarketSearch() {
+  document.getElementById('market-search').value = '';
+  document.getElementById('market-rarity').value = '';
+  document.getElementById('market-min-price').value = '';
+  document.getElementById('market-max-price').value = '';
+  loadAll();
+}
+
+async function quickAddWatch(slug, rarity) {
+  try {
+    await api('POST', '/api/watchlist/player', { slug, rarity });
+    toast('Ajoute a la watchlist!');
+    loadAll();
+  } catch (e) { toast('Deja dans la watchlist ou erreur', 'error'); }
+}
+
+async function quickBuyCard(slug, rarity, price) {
+  const buyPrice = prompt('Prix d\'achat (EUR):', price);
+  if (!buyPrice) return;
+  try {
+    await api('POST', '/api/portfolio', { playerSlug: slug, rarity, buyPrice: parseFloat(buyPrice), buyType: 'market' });
+    toast('Carte ajoutee au portfolio!');
+    loadAll();
+  } catch (e) { toast('Erreur', 'error'); }
+}
+
+// ============================================================
+//                    RENTABILITE
+// ============================================================
+
+function renderProfitability() {
+  const p = state.profitability;
+  if (!p) return;
+
+  const totalInvested = p.portfolioActive?.total_invested || 0;
+  const realizedPnL = p.portfolioSold?.total_pnl || 0;
+  const totalRewards = p.totalRewards || 0;
+  const totalRevenue = (p.portfolioSold?.total_revenue || 0) + totalRewards;
+  const totalCost = totalInvested + (p.portfolioSold?.total_cost || 0);
+  const netProfit = realizedPnL + totalRewards;
+  const overallROI = totalCost > 0 ? (netProfit / totalCost * 100) : 0;
+  const nbTrades = p.portfolioSold?.count || 0;
+  const winRate = nbTrades > 0 ? ((p.bestTrades || []).filter(t => t.pnl > 0).length / Math.min(nbTrades, 5) * 100) : 0;
+
+  // KPIs
+  document.getElementById('kpi-profit').innerHTML =
+    kpiCard('Profit net total', (netProfit >= 0 ? '+' : '') + netProfit.toFixed(0) + 'E', 'Trading + Rewards', netProfit) +
+    kpiCard('ROI global', overallROI.toFixed(1) + '%', totalCost.toFixed(0) + 'E depenses', overallROI) +
+    kpiCard('Rewards totaux', '+' + totalRewards.toFixed(0) + 'E', '', totalRewards > 0 ? 1 : null) +
+    kpiCard('Trading P&L', (realizedPnL >= 0 ? '+' : '') + realizedPnL.toFixed(0) + 'E', nbTrades + ' trades', realizedPnL) +
+    kpiCard('Investissement', totalInvested.toFixed(0) + 'E', p.portfolioActive?.count + ' cartes') +
+    kpiCard('Revenue totale', totalRevenue.toFixed(0) + 'E', '');
+
+  // Big metrics
+  document.getElementById('profit-big-metrics').innerHTML =
+    '<div class="card"><div class="profit-metric"><div class="pm-value ' + (netProfit >= 0 ? 'text-green' : 'text-red') + '">' + (netProfit >= 0 ? '+' : '') + netProfit.toFixed(0) + 'E</div><div class="pm-label">Profit net</div><div class="pm-sub">Trading (' + realizedPnL.toFixed(0) + 'E) + Rewards (' + totalRewards.toFixed(0) + 'E)</div></div></div>' +
+    '<div class="card"><div class="profit-metric"><div class="pm-value ' + (overallROI >= 0 ? 'text-green' : 'text-red') + '">' + overallROI.toFixed(1) + '%</div><div class="pm-label">ROI global</div><div class="pm-sub">Sur ' + totalCost.toFixed(0) + 'E investis</div></div></div>' +
+    '<div class="card"><div class="profit-metric"><div class="pm-value text-accent">' + nbTrades + '</div><div class="pm-label">Trades realises</div><div class="pm-sub">' + (p.portfolioActive?.count || 0) + ' cartes en cours</div></div></div>';
+
+  // Monthly P&L chart
+  const monthlyTrading = p.monthlyTrading || [];
+  const monthlyRewards = p.monthlyRewards || [];
+  const allMonths = [...new Set([...monthlyTrading.map(m => m.month), ...monthlyRewards.map(m => m.month)])].sort();
+
+  if (allMonths.length > 0) {
+    const tradingData = allMonths.map(m => {
+      const entry = monthlyTrading.find(t => t.month === m);
+      return entry ? entry.pnl : 0;
+    });
+    const rewardsData = allMonths.map(m => {
+      const entry = monthlyRewards.find(t => t.month === m);
+      return entry ? entry.rewards : 0;
+    });
+
+    const canvas = document.getElementById('chart-monthly-pnl');
+    if (canvas) {
+      if (charts['chart-monthly-pnl']) charts['chart-monthly-pnl'].destroy();
+      charts['chart-monthly-pnl'] = new Chart(canvas, {
+        type: 'bar',
+        data: {
+          labels: allMonths,
+          datasets: [
+            { label: 'Trading P&L', data: tradingData, backgroundColor: tradingData.map(v => v >= 0 ? '#10b98188' : '#ef444488'), borderRadius: 4 },
+            { label: 'Rewards', data: rewardsData, backgroundColor: '#7c3aed88', borderRadius: 4 },
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#8888aa', font: { size: 10 } } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#8888aa' }, grid: { color: '#252560' } },
+            y: { stacked: true, title: { display: true, text: 'EUR', color: '#555577' }, ticks: { color: '#8888aa' }, grid: { color: '#252560' } },
+          }
+        }
+      });
+    }
+  }
+
+  // Rarity split chart
+  const byRarity = p.byRarity || [];
+  if (byRarity.length > 0) {
+    const rarityColors = { 'super_rare': '#7c3aed', 'rare': '#3b82f6', 'unique': '#f59e0b', 'limited': '#10b981' };
+    const canvas = document.getElementById('chart-rarity-split');
+    if (canvas) {
+      if (charts['chart-rarity-split']) charts['chart-rarity-split'].destroy();
+      charts['chart-rarity-split'] = new Chart(canvas, {
+        type: 'doughnut',
+        data: {
+          labels: byRarity.map(r => r.rarity.replace('_', ' ')),
+          datasets: [{
+            data: byRarity.map(r => r.invested),
+            backgroundColor: byRarity.map(r => rarityColors[r.rarity] || '#7c3aed'),
+            borderWidth: 0,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'right', labels: { color: '#8888aa', font: { size: 11 }, padding: 16 } },
+          },
+        }
+      });
+    }
+  }
+
+  // Best/Worst trades
+  function tradesList(trades, containerId) {
+    const el = document.getElementById(containerId);
+    if (!trades || trades.length === 0) {
+      el.innerHTML = '<div class="text-muted" style="padding:20px;text-align:center">Aucun trade</div>';
+      return;
+    }
+    el.innerHTML = trades.map(t => {
+      const pnlCls = t.pnl >= 0 ? 'text-green' : 'text-red';
+      return '<div class="trade-row">' +
+        '<span class="tr-name">' + (t.player_name || t.player_slug) + '</span>' +
+        rarityBadge(t.rarity) +
+        '<span class="tr-buy text-muted">' + (t.buy_price || 0).toFixed(0) + 'E</span>' +
+        '<span class="tr-sell">&#8594; ' + (t.sell_price || 0).toFixed(0) + 'E</span>' +
+        '<span class="tr-pnl ' + pnlCls + '">' + (t.pnl >= 0 ? '+' : '') + t.pnl.toFixed(0) + 'E</span>' +
+        '<span class="tr-pct ' + pnlCls + '">(' + (t.pnl_pct >= 0 ? '+' : '') + t.pnl_pct.toFixed(0) + '%)</span>' +
+      '</div>';
+    }).join('');
+  }
+
+  tradesList(p.bestTrades, 'best-trades');
+  tradesList(p.worstTrades, 'worst-trades');
+
+  // All sold trades table
+  const allSold = p.allSold || [];
+  if (allSold.length === 0) {
+    document.getElementById('profit-all-trades-tbody').innerHTML = '<tr><td colspan="7" class="text-muted" style="text-align:center;padding:20px">Aucune vente realisee</td></tr>';
+  } else {
+    document.getElementById('profit-all-trades-tbody').innerHTML = allSold.map(t => {
+      const pnlCls = t.pnl >= 0 ? 'text-green' : 'text-red';
+      return '<tr>' +
+        '<td class="fw-600">' + (t.player_name || t.player_slug) + '</td>' +
+        '<td>' + rarityBadge(t.rarity) + '</td>' +
+        '<td class="mono">' + (t.buy_price || 0).toFixed(0) + ' E</td>' +
+        '<td class="mono fw-600">' + (t.sell_price || 0).toFixed(0) + ' E</td>' +
+        '<td class="mono ' + pnlCls + ' fw-700">' + (t.pnl >= 0 ? '+' : '') + t.pnl.toFixed(0) + ' E</td>' +
+        '<td class="' + pnlCls + ' fw-600">' + (t.pnl_pct >= 0 ? '+' : '') + t.pnl_pct.toFixed(0) + '%</td>' +
+        '<td class="text-muted">' + (t.sell_date ? new Date(t.sell_date).toLocaleDateString('fr-FR') : '-') + '</td>' +
+      '</tr>';
+    }).join('');
+  }
+}
+
+// ============================================================
+//                    INIT
+// ============================================================
+
+loadAll();
+setInterval(loadAll, REFRESH_INTERVAL);
+</script>
+</body>
+</html>
