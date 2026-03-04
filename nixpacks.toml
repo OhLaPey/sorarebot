@@ -1,5 +1,6 @@
 [phases.setup]
-nixPkgs = ["chromium", "nodejs_20"]
+nixPkgs = ["chromium", "nodejs_20", "python3"]
+aptPkgs = ["build-essential"]
 
 [phases.install]
 cmds = ["npm install"]
