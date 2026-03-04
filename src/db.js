@@ -182,6 +182,50 @@ function createTables() {
       notified INTEGER DEFAULT 0
     );
 
+    -- Lineups (compositions pour les GW)
+    CREATE TABLE IF NOT EXISTS lineups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      gw_number INTEGER NOT NULL,
+      league TEXT NOT NULL,
+      card_slug_1 TEXT,
+      card_slug_2 TEXT,
+      card_slug_3 TEXT,
+      card_slug_4 TEXT,
+      card_slug_5 TEXT,
+      total_score REAL,
+      rank INTEGER,
+      reward_earned REAL DEFAULT 0,
+      status TEXT DEFAULT 'pending',
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(gw_number, league)
+    );
+
+    -- Resultats GW (historique de jeu)
+    CREATE TABLE IF NOT EXISTS gw_results (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      gw_number INTEGER NOT NULL,
+      league TEXT NOT NULL,
+      rank INTEGER,
+      total_score REAL,
+      reward_earned REAL DEFAULT 0,
+      participants INTEGER,
+      played_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(gw_number, league)
+    );
+
+    -- Recherches marche sauvegardees
+    CREATE TABLE IF NOT EXISTS market_searches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      search_query TEXT,
+      rarity TEXT,
+      min_price REAL,
+      max_price REAL,
+      league TEXT,
+      position TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     -- Index pour les performances
     CREATE INDEX IF NOT EXISTS idx_price_history_slug ON price_history(slug, rarity);
     CREATE INDEX IF NOT EXISTS idx_price_history_ts ON price_history(timestamp);
@@ -192,6 +236,8 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_portfolio_player ON portfolio(player_slug);
     CREATE INDEX IF NOT EXISTS idx_ev_history_gw ON ev_history(gw_number);
     CREATE INDEX IF NOT EXISTS idx_opportunities_active ON opportunities(active, notified);
+    CREATE INDEX IF NOT EXISTS idx_lineups_gw ON lineups(gw_number);
+    CREATE INDEX IF NOT EXISTS idx_gw_results_gw ON gw_results(gw_number);
   `);
 }
 
@@ -528,6 +574,195 @@ function deactivateOldOpportunities() {
   return db.prepare("UPDATE opportunities SET active = 0 WHERE created_at < datetime('now', '-24 hours')").run();
 }
 
+// ============================================================
+//            LINEUPS & GW RESULTS (Jouer)
+// ============================================================
+
+function saveLineup(gwNumber, league, cardSlugs, status) {
+  const slugs = cardSlugs || [];
+  return db.prepare(`
+    INSERT OR REPLACE INTO lineups (gw_number, league, card_slug_1, card_slug_2, card_slug_3, card_slug_4, card_slug_5, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(gwNumber, league, slugs[0] || null, slugs[1] || null, slugs[2] || null, slugs[3] || null, slugs[4] || null, status || 'pending');
+}
+
+function getLineup(gwNumber, league) {
+  return db.prepare('SELECT * FROM lineups WHERE gw_number = ? AND league = ?').get(gwNumber, league);
+}
+
+function getLineups(gwNumber) {
+  if (gwNumber) {
+    return db.prepare('SELECT * FROM lineups WHERE gw_number = ? ORDER BY league').all(gwNumber);
+  }
+  return db.prepare('SELECT * FROM lineups ORDER BY gw_number DESC, league LIMIT 50').all();
+}
+
+function saveGWResult(data) {
+  return db.prepare(`
+    INSERT OR REPLACE INTO gw_results (gw_number, league, rank, total_score, reward_earned, participants, played_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(data.gwNumber, data.league, data.rank, data.totalScore, data.rewardEarned || 0, data.participants, data.playedAt || new Date().toISOString());
+}
+
+function getGWResults(limit) {
+  return db.prepare('SELECT * FROM gw_results ORDER BY gw_number DESC, league LIMIT ?').all(limit || 100);
+}
+
+function getGWResultsByLeague(league, limit) {
+  return db.prepare('SELECT * FROM gw_results WHERE league = ? ORDER BY gw_number DESC LIMIT ?').all(league, limit || 50);
+}
+
+function getPlayStats() {
+  const total = db.prepare('SELECT COUNT(*) as count, COALESCE(SUM(reward_earned), 0) as total_rewards FROM gw_results').get();
+  const byLeague = db.prepare(`
+    SELECT league, COUNT(*) as gw_played, COALESCE(SUM(reward_earned), 0) as total_rewards,
+           COALESCE(AVG(rank), 0) as avg_rank, COALESCE(AVG(total_score), 0) as avg_score
+    FROM gw_results GROUP BY league ORDER BY total_rewards DESC
+  `).all();
+  const bestResult = db.prepare('SELECT * FROM gw_results WHERE reward_earned > 0 ORDER BY reward_earned DESC LIMIT 1').get();
+  return { total, byLeague, bestResult };
+}
+
+// ============================================================
+//            MARKET SEARCH (Marche des transferts)
+// ============================================================
+
+function getAllListedPlayers() {
+  return db.prepare(`
+    SELECT ph.slug, ph.rarity, ph.min_price, ph.median_price, ph.nb_listings, ph.timestamp,
+           w.name, w.max_price
+    FROM price_history ph
+    INNER JOIN (
+      SELECT slug, rarity, MAX(timestamp) as max_ts FROM price_history GROUP BY slug, rarity
+    ) latest ON ph.slug = latest.slug AND ph.rarity = latest.rarity AND ph.timestamp = latest.max_ts
+    LEFT JOIN watchlist w ON ph.slug = w.slug AND ph.rarity = w.rarity AND w.active = 1
+    WHERE ph.nb_listings > 0
+    ORDER BY ph.min_price ASC
+  `).all();
+}
+
+function searchMarket(query, rarity, minPrice, maxPrice) {
+  let sql = `
+    SELECT ph.slug, ph.rarity, ph.min_price, ph.median_price, ph.nb_listings, ph.timestamp,
+           w.name, w.max_price
+    FROM price_history ph
+    INNER JOIN (
+      SELECT slug, rarity, MAX(timestamp) as max_ts FROM price_history GROUP BY slug, rarity
+    ) latest ON ph.slug = latest.slug AND ph.rarity = latest.rarity AND ph.timestamp = latest.max_ts
+    LEFT JOIN watchlist w ON ph.slug = w.slug AND ph.rarity = w.rarity AND w.active = 1
+    WHERE ph.nb_listings > 0
+  `;
+  const params = [];
+
+  if (query) {
+    sql += ' AND (ph.slug LIKE ? OR w.name LIKE ?)';
+    params.push('%' + query + '%', '%' + query + '%');
+  }
+  if (rarity) {
+    sql += ' AND ph.rarity = ?';
+    params.push(rarity);
+  }
+  if (minPrice) {
+    sql += ' AND ph.min_price >= ?';
+    params.push(minPrice);
+  }
+  if (maxPrice) {
+    sql += ' AND ph.min_price <= ?';
+    params.push(maxPrice);
+  }
+
+  sql += ' ORDER BY ph.min_price ASC LIMIT 100';
+  return db.prepare(sql).all(...params);
+}
+
+function getRecentSales(limit) {
+  return db.prepare('SELECT * FROM sales ORDER BY sale_date DESC, created_at DESC LIMIT ?').all(limit || 50);
+}
+
+// ============================================================
+//            RENTABILITE (Profitability)
+// ============================================================
+
+function getProfitabilityOverview() {
+  // Total invested vs current value
+  const portfolioActive = db.prepare(`
+    SELECT COUNT(*) as count, COALESCE(SUM(buy_price), 0) as total_invested
+    FROM portfolio WHERE sold = 0
+  `).get();
+
+  // Realized P&L
+  const portfolioSold = db.prepare(`
+    SELECT COUNT(*) as count, COALESCE(SUM(sell_price - buy_price), 0) as total_pnl,
+           COALESCE(SUM(buy_price), 0) as total_cost, COALESCE(SUM(sell_price), 0) as total_revenue
+    FROM portfolio WHERE sold = 1
+  `).get();
+
+  // Total rewards earned
+  const rewards = db.prepare('SELECT COALESCE(SUM(reward_earned), 0) as total FROM gw_results').get();
+
+  // Monthly breakdown
+  const monthlyTrading = db.prepare(`
+    SELECT strftime('%Y-%m', sell_date) as month,
+           COUNT(*) as trades,
+           SUM(sell_price - buy_price) as pnl
+    FROM portfolio WHERE sold = 1 AND sell_date IS NOT NULL
+    GROUP BY month ORDER BY month DESC LIMIT 12
+  `).all();
+
+  const monthlyRewards = db.prepare(`
+    SELECT strftime('%Y-%m', played_at) as month,
+           SUM(reward_earned) as rewards
+    FROM gw_results WHERE played_at IS NOT NULL
+    GROUP BY month ORDER BY month DESC LIMIT 12
+  `).all();
+
+  // Best and worst trades
+  const bestTrades = db.prepare(`
+    SELECT *, (sell_price - buy_price) as pnl,
+           CASE WHEN buy_price > 0 THEN ((sell_price - buy_price) / buy_price * 100) ELSE 0 END as pnl_pct
+    FROM portfolio WHERE sold = 1 ORDER BY pnl DESC LIMIT 5
+  `).all();
+
+  const worstTrades = db.prepare(`
+    SELECT *, (sell_price - buy_price) as pnl,
+           CASE WHEN buy_price > 0 THEN ((sell_price - buy_price) / buy_price * 100) ELSE 0 END as pnl_pct
+    FROM portfolio WHERE sold = 1 ORDER BY pnl ASC LIMIT 5
+  `).all();
+
+  // Portfolio by rarity
+  const byRarity = db.prepare(`
+    SELECT rarity, COUNT(*) as count, COALESCE(SUM(buy_price), 0) as invested
+    FROM portfolio WHERE sold = 0 GROUP BY rarity
+  `).all();
+
+  // Portfolio by buy type
+  const byType = db.prepare(`
+    SELECT buy_type, COUNT(*) as count, COALESCE(SUM(buy_price), 0) as invested
+    FROM portfolio WHERE sold = 0 GROUP BY buy_type
+  `).all();
+
+  // All sold for chart
+  const allSold = db.prepare(`
+    SELECT player_name, player_slug, rarity, buy_price, sell_price, buy_date, sell_date,
+           (sell_price - buy_price) as pnl,
+           CASE WHEN buy_price > 0 THEN ((sell_price - buy_price) / buy_price * 100) ELSE 0 END as pnl_pct
+    FROM portfolio WHERE sold = 1 ORDER BY sell_date DESC
+  `).all();
+
+  return {
+    portfolioActive,
+    portfolioSold,
+    totalRewards: rewards.total,
+    monthlyTrading,
+    monthlyRewards,
+    bestTrades,
+    worstTrades,
+    byRarity,
+    byType,
+    allSold,
+  };
+}
+
 function getDb() {
   return db;
 }
@@ -544,4 +779,7 @@ module.exports = {
   getUserEdge, setUserEdge,
   addEVHistory, getEVHistory, getLatestEV,
   addOpportunity, getActiveOpportunities, getUnnotifiedOpportunities, markOpportunitiesNotified, deactivateOldOpportunities,
+  saveLineup, getLineup, getLineups, saveGWResult, getGWResults, getGWResultsByLeague, getPlayStats,
+  getAllListedPlayers, searchMarket, getRecentSales,
+  getProfitabilityOverview,
 };

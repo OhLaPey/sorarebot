@@ -197,6 +197,63 @@ function createRouter(botStats) {
     res.json(db.getActiveOpportunities());
   });
 
+  // === JOUER (Play) ===
+
+  router.get('/api/play/stats', (req, res) => {
+    res.json(db.getPlayStats());
+  });
+
+  router.get('/api/play/results', (req, res) => {
+    const league = req.query.league;
+    const limit = parseInt(req.query.limit) || 50;
+    if (league) {
+      res.json(db.getGWResultsByLeague(league, limit));
+    } else {
+      res.json(db.getGWResults(limit));
+    }
+  });
+
+  router.post('/api/play/result', (req, res) => {
+    const { gwNumber, league, rank, totalScore, rewardEarned, participants } = req.body;
+    if (!gwNumber || !league) return res.status(400).json({ error: 'gwNumber et league requis' });
+    db.saveGWResult({ gwNumber, league, rank, totalScore, rewardEarned: rewardEarned || 0, participants });
+    res.json({ success: true });
+  });
+
+  router.get('/api/play/lineups', (req, res) => {
+    const gw = req.query.gw ? parseInt(req.query.gw) : null;
+    res.json(db.getLineups(gw));
+  });
+
+  router.post('/api/play/lineup', (req, res) => {
+    const { gwNumber, league, cardSlugs } = req.body;
+    if (!gwNumber || !league) return res.status(400).json({ error: 'gwNumber et league requis' });
+    db.saveLineup(gwNumber, league, cardSlugs || [], 'submitted');
+    res.json({ success: true });
+  });
+
+  // === MARCHE DES TRANSFERTS ===
+
+  router.get('/api/market/listings', (req, res) => {
+    const { query, rarity, minPrice, maxPrice } = req.query;
+    if (query || rarity || minPrice || maxPrice) {
+      res.json(db.searchMarket(query, rarity, minPrice ? parseFloat(minPrice) : null, maxPrice ? parseFloat(maxPrice) : null));
+    } else {
+      res.json(db.getAllListedPlayers());
+    }
+  });
+
+  router.get('/api/market/recent-sales', (req, res) => {
+    const limit = parseInt(req.query.limit) || 50;
+    res.json(db.getRecentSales(limit));
+  });
+
+  // === RENTABILITE ===
+
+  router.get('/api/profitability', (req, res) => {
+    res.json(db.getProfitabilityOverview());
+  });
+
   // === SCAN TRIGGER ===
 
   router.post('/api/scan', (req, res) => {
