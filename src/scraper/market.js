@@ -219,4 +219,143 @@ async function scrapeSalesHistory(browser, playerSlug, rarity) {
   }
 }
 
-module.exports = { scrapePlayerListings, scrapeClubListings, scrapeSalesHistory };
+/**
+ * Recherche live sur le marche SorareScore
+ * Permet de chercher n'importe quel joueur, pas seulement la watchlist
+ */
+async function scrapeMarketSearch(browser, query, rarity, sortBy) {
+  const page = await createPage(browser);
+
+  const searchName = query.replace(/\s+/g, '+');
+  const sorareRarity = rarity || 'super_rare';
+  const sortCol = sortBy || 'price';
+
+  // Scrape current sale prices
+  const urlCurrent = 'https://sorarescore.com/player-stats?gameweek=0&sort_column=' + sortCol + '&sort_direction=asc&rarity=' + sorareRarity + '&price_type=current_sale&search=' + searchName;
+
+  try {
+    await page.goto(urlCurrent, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await sleep(4000);
+    await page.waitForSelector('table', { timeout: 10000 }).catch(() => {});
+    await sleep(2000);
+
+    const result = await page.evaluate(() => {
+      const players = [];
+      const rows = document.querySelectorAll('tr');
+
+      rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length < 4) return;
+
+        let playerName = '';
+        let playerSlug = '';
+        let currentPrice = null;
+        let lastSalePrice = null;
+        let score = null;
+        let l5 = null;
+        let club = '';
+
+        // Nom du joueur
+        const firstCell = cells[0];
+        if (firstCell) {
+          playerName = (firstCell.textContent || '').trim();
+          // Essayer d'extraire le slug depuis un lien
+          const link = firstCell.querySelector('a');
+          if (link) {
+            const href = link.getAttribute('href') || '';
+            const slugMatch = href.match(/\/player\/([a-z0-9-]+)/);
+            if (slugMatch) playerSlug = slugMatch[1];
+          }
+          // Slug fallback
+          if (!playerSlug) {
+            playerSlug = playerName.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
+          }
+        }
+
+        // Parcourir les cellules pour extraire les donnees
+        const numericValues = [];
+        cells.forEach((cell, idx) => {
+          if (idx === 0) return;
+          const text = (cell.textContent || '').trim();
+
+          // Prix (contient le symbole EUR)
+          if (text.includes('\u20AC') && !text.includes('N/A')) {
+            const match = text.match(/(\d{1,3}(?:[,.\s]\d{3})*(?:[,.]\d{1,2})?)\s*\u20AC/);
+            if (match) {
+              const priceStr = match[1].replace(/[\s,]/g, '').replace(',', '.');
+              const price = parseFloat(priceStr);
+              if (price > 0 && price < 100000) {
+                if (currentPrice === null) currentPrice = price;
+                else if (lastSalePrice === null) lastSalePrice = price;
+              }
+            }
+          }
+
+          // Score (nombre entre 0 et 150)
+          const scoreMatch = text.match(/^(\d{1,3}(?:[.,]\d{1,2})?)$/);
+          if (scoreMatch) {
+            const val = parseFloat(scoreMatch[1].replace(',', '.'));
+            if (val >= 0 && val <= 150) {
+              numericValues.push(val);
+            }
+          }
+
+          // L5 value
+          const l5El = cell.querySelector('.l5-value, [class*="l5"]');
+          if (l5El) {
+            const l5Match = (l5El.textContent || '').trim().match(/(\d{1,3}(?:[.,]\d{1,2})?)/);
+            if (l5Match) {
+              const val = parseFloat(l5Match[1].replace(',', '.'));
+              if (val >= 0 && val <= 150) l5 = val;
+            }
+          }
+
+          // Club (texte court sans chiffres, pas le nom du joueur)
+          if (text.length > 1 && text.length < 30 && !/\d/.test(text) && !text.includes('\u20AC') && text !== playerName && idx > 0 && idx < 3) {
+            if (!club) club = text;
+          }
+        });
+
+        if (numericValues.length >= 1 && score === null) score = numericValues[0];
+        if (numericValues.length >= 2 && l5 === null) l5 = numericValues[1];
+
+        if (playerName && (currentPrice !== null || score !== null)) {
+          players.push({
+            playerName,
+            playerSlug,
+            currentPrice,
+            lastSalePrice,
+            score,
+            l5,
+            club,
+          });
+        }
+      });
+
+      return players;
+    });
+
+    await page.close();
+
+    console.log('  Recherche marche "' + query + '": ' + result.length + ' resultats');
+    return result.map(p => ({
+      slug: p.playerSlug,
+      playerName: p.playerName,
+      rarity: sorareRarity,
+      currentPrice: p.currentPrice,
+      lastSalePrice: p.lastSalePrice,
+      score: p.score,
+      l5: p.l5,
+      club: p.club,
+      url: 'https://sorare.com/fr/football/players/' + p.playerSlug,
+      source: 'live',
+    }));
+
+  } catch (error) {
+    console.log('  Recherche marche erreur: ' + error.message.substring(0, 50));
+    try { await page.close(); } catch (e) {}
+    return [];
+  }
+}
+
+module.exports = { scrapePlayerListings, scrapeClubListings, scrapeSalesHistory, scrapeMarketSearch };

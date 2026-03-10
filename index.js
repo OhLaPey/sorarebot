@@ -12,7 +12,7 @@ const config = require('./src/config');
 const db = require('./src/db');
 const sheets = require('./src/sheets');
 const { createBrowser } = require('./src/scraper/browser');
-const { scrapePlayerListings, scrapeClubListings, scrapeSalesHistory } = require('./src/scraper/market');
+const { scrapePlayerListings, scrapeClubListings, scrapeSalesHistory, scrapeMarketSearch } = require('./src/scraper/market');
 const { scrapeAuctions } = require('./src/scraper/auctions');
 const { detectSecondaryOpportunities, detectAuctionOpportunities } = require('./src/scraper/opportunities');
 const { scrapeAllPlayerScores, scrapePlayerScoreHistory } = require('./src/scraper/scores');
@@ -467,9 +467,30 @@ async function importPlayerSales(playerSlug, rarity) {
   }
 }
 
+// Live market search
+async function liveMarketSearch(query, rarity) {
+  let browser;
+  try {
+    browser = await createBrowser();
+    const results = await scrapeMarketSearch(browser, query, rarity);
+
+    // Sauvegarder en DB les resultats pour les retrouver dans la recherche locale
+    for (const r of results) {
+      if (r.currentPrice !== null) {
+        db.addPriceHistory(r.slug, r.rarity, r.currentPrice, r.currentPrice, r.currentPrice, 1);
+      }
+    }
+
+    return results;
+  } finally {
+    if (browser) await browser.close();
+  }
+}
+
 // Expose globally for Discord handler
 global.importPlayerSales = importPlayerSales;
 global.triggerScan = () => scanMarket();
+global.liveMarketSearch = liveMarketSearch;
 
 // ============================================================
 //                    DEMARRAGE

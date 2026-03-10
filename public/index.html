@@ -1148,31 +1148,40 @@ input[type="number"] { width: 110px; }
   <div class="page-header">
     <h2>Marche des transferts</h2>
     <div class="actions">
-      <button class="btn btn-primary" onclick="triggerScan()">Scanner le marche</button>
+      <button class="btn btn-secondary" onclick="triggerScan()">Scanner le marche</button>
     </div>
   </div>
 
   <div class="card">
-    <div class="card-header"><h3>Rechercher</h3></div>
+    <div class="card-header"><h3>Recherche ouverte</h3><span class="text-muted" style="font-size:0.75rem">Recherche en direct sur SorareScore</span></div>
     <div class="search-bar">
-      <input type="text" id="market-search" placeholder="Rechercher un joueur..." onkeyup="if(event.key==='Enter')searchMarket()">
+      <input type="text" id="market-search" placeholder="Nom du joueur (ex: mbappe, barcola, samba...)" onkeyup="if(event.key==='Enter')searchMarketLive()" style="flex:2">
       <select id="market-rarity">
-        <option value="">Toutes raretes</option>
         <option value="super_rare">Super Rare</option>
         <option value="rare">Rare</option>
         <option value="unique">Unique</option>
+        <option value="limited">Limited</option>
       </select>
       <input type="number" id="market-min-price" placeholder="Prix min E" style="width:110px">
       <input type="number" id="market-max-price" placeholder="Prix max E" style="width:110px">
-      <button class="btn btn-primary" onclick="searchMarket()">Rechercher</button>
+      <button class="btn btn-primary" onclick="searchMarketLive()" id="market-search-btn">Rechercher</button>
       <button class="btn btn-secondary" onclick="clearMarketSearch()">Reset</button>
     </div>
+  </div>
+
+  <!-- Live search results -->
+  <div class="card" id="market-live-results" style="display:none">
+    <div class="card-header">
+      <h3>Resultats en direct</h3>
+      <span class="text-muted" id="market-live-count">-</span>
+    </div>
+    <div id="market-live-listings" style="max-height:500px;overflow-y:auto"></div>
   </div>
 
   <div class="grid-2">
     <div class="card">
       <div class="card-header">
-        <h3>Listings disponibles</h3>
+        <h3>Listings watchlist</h3>
         <span class="text-muted" id="market-count">-</span>
       </div>
       <div id="market-listings" style="max-height:600px;overflow-y:auto">
@@ -2443,29 +2452,81 @@ function renderMarket() {
   }
 }
 
-async function searchMarket() {
+async function searchMarketLive() {
   const query = document.getElementById('market-search').value.trim();
   const rarity = document.getElementById('market-rarity').value;
-  const minPrice = document.getElementById('market-min-price').value;
-  const maxPrice = document.getElementById('market-max-price').value;
+  const minPrice = parseFloat(document.getElementById('market-min-price').value) || null;
+  const maxPrice = parseFloat(document.getElementById('market-max-price').value) || null;
 
-  let url = '/api/market/listings?';
-  if (query) url += 'query=' + encodeURIComponent(query) + '&';
-  if (rarity) url += 'rarity=' + rarity + '&';
-  if (minPrice) url += 'minPrice=' + minPrice + '&';
-  if (maxPrice) url += 'maxPrice=' + maxPrice + '&';
+  if (!query || query.length < 2) {
+    toast('Entre au moins 2 caracteres', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('market-search-btn');
+  btn.textContent = 'Recherche...';
+  btn.disabled = true;
+
+  const liveResults = document.getElementById('market-live-results');
+  const liveListings = document.getElementById('market-live-listings');
+  liveResults.style.display = 'block';
+  liveListings.innerHTML = '<div class="loading"><div class="spinner"></div><p class="text-muted" style="margin-top:8px">Scraping SorareScore en cours...</p></div>';
 
   try {
-    state.marketListings = await api('GET', url);
+    let results = await api('GET', '/api/market/search-live?query=' + encodeURIComponent(query) + '&rarity=' + rarity);
+
+    // Filtrer par prix si specifie
+    if (minPrice) results = results.filter(r => r.currentPrice && r.currentPrice >= minPrice);
+    if (maxPrice) results = results.filter(r => r.currentPrice && r.currentPrice <= maxPrice);
+
+    document.getElementById('market-live-count').textContent = results.length + ' joueurs trouves';
+
+    if (results.length === 0) {
+      liveListings.innerHTML = '<div class="text-muted" style="padding:20px;text-align:center">Aucun resultat pour "' + query + '" en ' + rarity.replace('_', ' ') + '</div>';
+    } else {
+      liveListings.innerHTML = results.map(r => {
+        const name = r.playerName || r.slug;
+        const scoreHtml = r.score !== null && r.score !== undefined ? '<span class="score-badge ' + (r.score >= 60 ? 'high' : r.score >= 40 ? 'mid' : 'low') + '" style="font-size:0.72rem;width:36px;height:24px">' + r.score.toFixed(0) + '</span>' : '';
+        const l5Html = r.l5 !== null && r.l5 !== undefined ? '<span class="text-muted" style="font-size:0.72rem">L5: ' + r.l5.toFixed(0) + '</span>' : '';
+        const lastSale = r.lastSalePrice ? '<span class="text-muted" style="font-size:0.72rem">Derniere vente: ' + r.lastSalePrice.toFixed(0) + ' E</span>' : '';
+        return '<div class="market-card" style="border-left:3px solid var(--accent)">' +
+          '<div class="mc-name">' + name + '</div>' +
+          (r.club ? '<span class="text-muted" style="font-size:0.72rem">' + r.club + '</span>' : '') +
+          '<div style="display:flex;gap:6px;align-items:center">' + rarityBadge(r.rarity) + scoreHtml + l5Html + '</div>' +
+          '<div class="mc-price mono fw-700">' + (r.currentPrice ? r.currentPrice.toFixed(0) + ' E' : '-') + '</div>' +
+          lastSale +
+          '<div style="display:flex;gap:4px;margin-top:4px">' +
+            '<button class="btn btn-sm btn-secondary" onclick="quickAddWatch(\'' + r.slug + '\',\'' + r.rarity + '\')">+ Watch</button>' +
+            '<button class="btn btn-sm btn-success" onclick="quickBuyCard(\'' + r.slug + '\',\'' + r.rarity + '\',' + (r.currentPrice || 0) + ')">+ Portfolio</button>' +
+            '<a href="' + r.url + '" target="_blank" class="btn btn-sm" style="font-size:0.7rem">Sorare</a>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    // Also refresh local DB results
+    let localUrl = '/api/market/listings?';
+    if (query) localUrl += 'query=' + encodeURIComponent(query) + '&';
+    if (rarity) localUrl += 'rarity=' + rarity + '&';
+    state.marketListings = await api('GET', localUrl);
     renderMarket();
-  } catch (e) { toast('Erreur recherche', 'error'); }
+
+    toast(results.length + ' joueurs trouves en direct!');
+  } catch (e) {
+    liveListings.innerHTML = '<div class="text-muted" style="padding:20px;text-align:center">Erreur de recherche. Reessaye.</div>';
+    toast('Erreur recherche live', 'error');
+  } finally {
+    btn.textContent = 'Rechercher';
+    btn.disabled = false;
+  }
 }
 
 function clearMarketSearch() {
   document.getElementById('market-search').value = '';
-  document.getElementById('market-rarity').value = '';
+  document.getElementById('market-rarity').value = 'super_rare';
   document.getElementById('market-min-price').value = '';
   document.getElementById('market-max-price').value = '';
+  document.getElementById('market-live-results').style.display = 'none';
   loadAll();
 }
 

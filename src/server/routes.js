@@ -248,6 +248,21 @@ function createRouter(botStats) {
     res.json(db.getRecentSales(limit));
   });
 
+  // Recherche live sur SorareScore (n'importe quel joueur)
+  router.get('/api/market/search-live', async (req, res) => {
+    const { query, rarity } = req.query;
+    if (!query || query.length < 2) return res.status(400).json({ error: 'query requis (min 2 caracteres)' });
+    if (typeof global.liveMarketSearch !== 'function') return res.status(503).json({ error: 'Service pas encore pret' });
+
+    try {
+      const results = await global.liveMarketSearch(query, rarity || 'super_rare');
+      res.json(results);
+    } catch (error) {
+      console.error('Erreur recherche live:', error.message);
+      res.status(500).json({ error: 'Erreur scraping: ' + error.message });
+    }
+  });
+
   // === RENTABILITE ===
 
   router.get('/api/profitability', (req, res) => {
