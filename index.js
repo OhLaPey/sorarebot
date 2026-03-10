@@ -15,6 +15,7 @@ const { createBrowser } = require('./src/scraper/browser');
 const { scrapePlayerListings, scrapeClubListings, scrapeSalesHistory } = require('./src/scraper/market');
 const { scrapeAuctions } = require('./src/scraper/auctions');
 const { detectSecondaryOpportunities, detectAuctionOpportunities } = require('./src/scraper/opportunities');
+const { scrapeAllPlayerScores, scrapePlayerScoreHistory } = require('./src/scraper/scores');
 const ev = require('./src/ev/calculator');
 const discordCommands = require('./src/discord/commands');
 const { createHandler } = require('./src/discord/handlers');
@@ -359,6 +360,85 @@ async function scanSalesHistory() {
   }
 }
 
+// ============================================================
+//                    SCAN SCORES SO5
+// ============================================================
+
+async function scanScores() {
+  console.log('=== SCAN SCORES === ' + new Date().toLocaleTimeString('fr-FR'));
+
+  let browser;
+
+  try {
+    browser = await createBrowser();
+    const watchlist = db.getWatchlist();
+    const portfolio = db.getPortfolio();
+
+    // Combiner tous les joueurs uniques (watchlist + portfolio)
+    const playerMap = new Map();
+    for (const p of watchlist.players) {
+      playerMap.set(p.slug + '-' + p.rarity, { slug: p.slug, name: p.name, rarity: p.rarity });
+    }
+    for (const p of portfolio) {
+      const key = p.player_slug + '-' + p.rarity;
+      if (!playerMap.has(key)) {
+        playerMap.set(key, { slug: p.player_slug, name: p.player_name, rarity: p.rarity });
+      }
+    }
+
+    const players = Array.from(playerMap.values());
+    console.log('  ' + players.length + ' joueurs a scanner');
+
+    const scores = await scrapeAllPlayerScores(browser, players);
+
+    for (const score of scores) {
+      db.upsertPlayerScore({
+        slug: score.slug,
+        playerName: score.playerName,
+        rarity: score.rarity,
+        lastScore: score.lastScore,
+        avgL5: score.avgL5,
+        avgL15: score.avgL15,
+        avgL40: score.avgL40,
+        gamesPlayed: score.gamesPlayed,
+        dnp: 0,
+        decisiveScore: null,
+        allAroundScore: null,
+      });
+    }
+
+    // Scrape historique pour les 3 premiers joueurs (eviter trop de requetes)
+    const topPlayers = players.slice(0, 3);
+    for (const player of topPlayers) {
+      const history = await scrapePlayerScoreHistory(browser, player.slug);
+      for (let i = 0; i < history.length; i++) {
+        db.addScoreHistory({
+          slug: player.slug,
+          playerName: player.name,
+          rarity: player.rarity,
+          gwNumber: history.length - i,
+          score: history[i].score,
+          decisive: null,
+          allAround: null,
+          played: history[i].played,
+          matchDate: history[i].matchDate,
+          opponent: history[i].opponent,
+          competition: history[i].competition,
+        });
+      }
+      await sleep(2000);
+    }
+
+    console.log('Scan scores termine. ' + scores.length + ' joueurs mis a jour.');
+
+  } catch (error) {
+    console.error('Erreur scan scores:', error.message);
+    stats.errors++;
+  } finally {
+    if (browser) await browser.close();
+  }
+}
+
 // Import player sales (used by Discord command)
 async function importPlayerSales(playerSlug, rarity) {
   let browser;
@@ -410,6 +490,7 @@ async function start() {
   console.log('Portfolio           : ' + db.getPortfolio().length + ' cartes');
   console.log('Scan marche         : toutes les ' + (config.SCAN_INTERVAL_MS / 60000).toFixed(0) + ' min');
   console.log('Scan encheres       : toutes les ' + (config.AUCTION_SCAN_INTERVAL_MS / 60000).toFixed(0) + ' min');
+  console.log('Scan scores         : toutes les ' + (config.SCORES_SCAN_INTERVAL_MS / 60000).toFixed(0) + ' min');
   console.log('Proxy NordVPN       : ' + (config.NORDVPN_USER ? 'Active' : 'Non configure'));
   console.log('Discord             : ' + (config.DISCORD_TOKEN ? 'Configure' : 'Non configure'));
   console.log('Google Sheets       : ' + (config.GOOGLE_CREDENTIALS ? 'Configure' : 'Non configure'));
@@ -455,6 +536,9 @@ async function start() {
 
   setTimeout(scanSalesHistory, 60000);
   setInterval(scanSalesHistory, config.SALES_SCAN_INTERVAL_MS);
+
+  setTimeout(scanScores, 90000);
+  setInterval(scanScores, config.SCORES_SCAN_INTERVAL_MS);
 }
 
 start().catch(console.error);

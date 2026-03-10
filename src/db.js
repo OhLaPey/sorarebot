@@ -214,6 +214,46 @@ function createTables() {
       UNIQUE(gw_number, league)
     );
 
+    -- Scores SO5 des joueurs
+    CREATE TABLE IF NOT EXISTS player_scores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug TEXT NOT NULL,
+      player_name TEXT,
+      rarity TEXT NOT NULL,
+      last_score REAL,
+      avg_l5 REAL,
+      avg_l15 REAL,
+      avg_l40 REAL,
+      games_played INTEGER,
+      dnp INTEGER DEFAULT 0,
+      decisive_score REAL,
+      all_around_score REAL,
+      updated_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(slug, rarity)
+    );
+
+    -- Historique des scores match par match
+    CREATE TABLE IF NOT EXISTS score_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug TEXT NOT NULL,
+      player_name TEXT,
+      rarity TEXT,
+      gw_number INTEGER,
+      score REAL,
+      decisive REAL,
+      all_around REAL,
+      played INTEGER DEFAULT 1,
+      match_date TEXT,
+      opponent TEXT,
+      competition TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(slug, gw_number)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_player_scores_slug ON player_scores(slug, rarity);
+    CREATE INDEX IF NOT EXISTS idx_score_history_slug ON score_history(slug);
+    CREATE INDEX IF NOT EXISTS idx_score_history_gw ON score_history(gw_number);
+
     -- Recherches marche sauvegardees
     CREATE TABLE IF NOT EXISTS market_searches (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -763,6 +803,70 @@ function getProfitabilityOverview() {
   };
 }
 
+// ============================================================
+//            PLAYER SCORES (SO5)
+// ============================================================
+
+function upsertPlayerScore(data) {
+  return db.prepare(`
+    INSERT INTO player_scores (slug, player_name, rarity, last_score, avg_l5, avg_l15, avg_l40, games_played, dnp, decisive_score, all_around_score, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(slug, rarity) DO UPDATE SET
+      player_name = excluded.player_name,
+      last_score = excluded.last_score,
+      avg_l5 = excluded.avg_l5,
+      avg_l15 = excluded.avg_l15,
+      avg_l40 = excluded.avg_l40,
+      games_played = excluded.games_played,
+      dnp = excluded.dnp,
+      decisive_score = excluded.decisive_score,
+      all_around_score = excluded.all_around_score,
+      updated_at = datetime('now')
+  `).run(data.slug, data.playerName, data.rarity, data.lastScore, data.avgL5, data.avgL15, data.avgL40, data.gamesPlayed, data.dnp || 0, data.decisiveScore, data.allAroundScore);
+}
+
+function getPlayerScores(rarity) {
+  if (rarity) {
+    return db.prepare('SELECT * FROM player_scores WHERE rarity = ? ORDER BY avg_l5 DESC').all(rarity);
+  }
+  return db.prepare('SELECT * FROM player_scores ORDER BY avg_l5 DESC').all();
+}
+
+function getPlayerScore(slug, rarity) {
+  return db.prepare('SELECT * FROM player_scores WHERE slug = ? AND rarity = ?').get(slug, rarity || 'super_rare');
+}
+
+function addScoreHistory(data) {
+  return db.prepare(`
+    INSERT OR REPLACE INTO score_history (slug, player_name, rarity, gw_number, score, decisive, all_around, played, match_date, opponent, competition)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(data.slug, data.playerName, data.rarity, data.gwNumber, data.score, data.decisive, data.allAround, data.played !== undefined ? data.played : 1, data.matchDate, data.opponent, data.competition);
+}
+
+function getScoreHistory(slug, limit) {
+  return db.prepare('SELECT * FROM score_history WHERE slug = ? ORDER BY gw_number DESC LIMIT ?').all(slug, limit || 40);
+}
+
+function getAllScoresForPortfolio() {
+  return db.prepare(`
+    SELECT ps.*, p.buy_price, p.current_value
+    FROM player_scores ps
+    INNER JOIN portfolio p ON ps.slug = p.player_slug AND ps.rarity = p.rarity
+    WHERE p.sold = 0
+    ORDER BY ps.avg_l5 DESC
+  `).all();
+}
+
+function getAllScoresForWatchlist() {
+  return db.prepare(`
+    SELECT ps.*, w.max_price, w.name as watch_name
+    FROM player_scores ps
+    INNER JOIN watchlist w ON ps.slug = w.slug AND ps.rarity = w.rarity
+    WHERE w.active = 1
+    ORDER BY ps.avg_l5 DESC
+  `).all();
+}
+
 function getDb() {
   return db;
 }
@@ -782,4 +886,6 @@ module.exports = {
   saveLineup, getLineup, getLineups, saveGWResult, getGWResults, getGWResultsByLeague, getPlayStats,
   getAllListedPlayers, searchMarket, getRecentSales,
   getProfitabilityOverview,
+  upsertPlayerScore, getPlayerScores, getPlayerScore, addScoreHistory, getScoreHistory,
+  getAllScoresForPortfolio, getAllScoresForWatchlist,
 };

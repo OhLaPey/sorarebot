@@ -13,6 +13,7 @@ module.exports = {
   SCAN_INTERVAL_MS: parseInt(process.env.SCAN_INTERVAL_MS) || 5 * 60 * 1000,
   AUCTION_SCAN_INTERVAL_MS: parseInt(process.env.AUCTION_SCAN_INTERVAL_MS) || 10 * 60 * 1000,
   SALES_SCAN_INTERVAL_MS: parseInt(process.env.SALES_SCAN_INTERVAL_MS) || 6 * 60 * 60 * 1000,
+  SCORES_SCAN_INTERVAL_MS: parseInt(process.env.SCORES_SCAN_INTERVAL_MS) || 30 * 60 * 1000,
   GOOGLE_CREDENTIALS: process.env.GOOGLE_CREDENTIALS,
   GOOGLE_SHEET_ID: process.env.GOOGLE_SHEET_ID || '1l4fRJjsajGOQ4jYDdAcL7i9x5gtaG8e11KXRksw6AXI',
   DB_PATH: process.env.DB_PATH || './data/sorare.db',

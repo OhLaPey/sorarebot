@@ -254,6 +254,28 @@ function createRouter(botStats) {
     res.json(db.getProfitabilityOverview());
   });
 
+  // === SCORES SO5 ===
+
+  router.get('/api/scores', (req, res) => {
+    const rarity = req.query.rarity;
+    res.json(db.getPlayerScores(rarity));
+  });
+
+  router.get('/api/scores/portfolio', (req, res) => {
+    res.json(db.getAllScoresForPortfolio());
+  });
+
+  router.get('/api/scores/watchlist', (req, res) => {
+    res.json(db.getAllScoresForWatchlist());
+  });
+
+  router.get('/api/scores/:slug', (req, res) => {
+    const rarity = req.query.rarity || 'super_rare';
+    const score = db.getPlayerScore(req.params.slug, rarity);
+    const history = db.getScoreHistory(req.params.slug, parseInt(req.query.limit) || 40);
+    res.json({ score, history });
+  });
+
   // === SCAN TRIGGER ===
 
   router.post('/api/scan', (req, res) => {

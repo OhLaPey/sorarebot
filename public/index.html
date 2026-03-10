@@ -645,6 +645,93 @@ input[type="number"] { width: 110px; }
   color: var(--text-muted);
   font-size: 0.78rem;
 }
+
+/* === SCORES SO5 === */
+.score-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 32px;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.score-badge.high { background: rgba(34,197,94,0.15); color: #22C55E; }
+.score-badge.mid { background: rgba(234,179,8,0.15); color: #EAB308; }
+.score-badge.low { background: rgba(239,68,68,0.15); color: #EF4444; }
+.score-badge.none { background: var(--bg-input); color: var(--text-muted); }
+
+.score-trend { font-size: 0.72rem; margin-left: 4px; }
+.score-trend.up { color: #22C55E; }
+.score-trend.down { color: #EF4444; }
+.score-trend.flat { color: var(--text-muted); }
+
+.score-table { width: 100%; border-collapse: collapse; }
+.score-table th {
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.score-table td {
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  border-bottom: 1px solid rgba(37,37,96,0.2);
+}
+.score-table tr:hover { background: rgba(124,58,237,0.05); }
+
+.score-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-input);
+  overflow: hidden;
+  width: 60px;
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+.score-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+.score-filters {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.score-filter-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.82rem;
+  transition: all 0.2s;
+}
+.score-filter-btn:hover, .score-filter-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(124,58,237,0.1);
+}
+
+.score-history-chart {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.score-dnp { color: var(--text-muted); font-style: italic; font-size: 0.78rem; }
 </style>
 </head>
 <body>
@@ -679,6 +766,9 @@ input[type="number"] { width: 110px; }
   </div>
   <div class="nav-item" onclick="navigate('portfolio')">
     <span class="icon">&#9632;</span> Portfolio
+  </div>
+  <div class="nav-item" onclick="navigate('scores')">
+    <span class="icon">&#9889;</span> Scores SO5
   </div>
 
   <div class="nav-section">Marche</div>
@@ -1158,6 +1248,105 @@ input[type="number"] { width: 110px; }
   </div>
 </div>
 
+<!-- ===== SCORES SO5 PAGE ===== -->
+<div id="page-scores" class="page">
+  <div class="page-header">
+    <h2>Scores SO5</h2>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="refreshScores()">Actualiser</button>
+    </div>
+  </div>
+
+  <!-- KPIs Scores -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Joueurs suivis</div>
+      <div class="stat-value" id="scores-total">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Meilleur L5</div>
+      <div class="stat-value" id="scores-best-l5">-</div>
+      <div class="stat-sub" id="scores-best-l5-name">-</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Moyenne L5 Portfolio</div>
+      <div class="stat-value" id="scores-avg-l5">-</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">DNP recents</div>
+      <div class="stat-value" id="scores-dnp">0</div>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="score-filters">
+    <button class="score-filter-btn active" onclick="filterScores('all')">Tous</button>
+    <button class="score-filter-btn" onclick="filterScores('portfolio')">Portfolio</button>
+    <button class="score-filter-btn" onclick="filterScores('watchlist')">Watchlist</button>
+  </div>
+
+  <!-- Score History Chart -->
+  <div class="score-history-chart">
+    <h3 style="font-size:0.9rem;margin-bottom:12px">Evolution des scores L5</h3>
+    <canvas id="scoresChart" height="200"></canvas>
+  </div>
+
+  <!-- Scores Table -->
+  <div class="card">
+    <table class="score-table" id="scores-table">
+      <thead>
+        <tr>
+          <th>Joueur</th>
+          <th>Rarete</th>
+          <th>Dernier Score</th>
+          <th>L5</th>
+          <th>L15</th>
+          <th>L40</th>
+          <th>Tendance</th>
+          <th>DNP</th>
+          <th>Mis a jour</th>
+        </tr>
+      </thead>
+      <tbody id="scores-tbody"></tbody>
+    </table>
+    <div id="scores-empty" class="empty-state" style="display:none">
+      <p>Aucun score enregistre</p>
+      <p style="font-size:0.82rem;color:var(--text-muted)">Les scores seront recuperes automatiquement au prochain scan (toutes les 30 min)</p>
+    </div>
+  </div>
+
+  <!-- Score Detail Modal -->
+  <div id="score-detail" class="card" style="display:none;margin-top:16px">
+    <div class="page-header" style="margin-bottom:12px">
+      <h3 id="score-detail-name" style="font-size:1rem">-</h3>
+      <button class="btn" onclick="document.getElementById('score-detail').style.display='none'">Fermer</button>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Dernier Score</div>
+        <div class="stat-value" id="detail-last-score">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">L5</div>
+        <div class="stat-value" id="detail-l5">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">L15</div>
+        <div class="stat-value" id="detail-l15">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">L40</div>
+        <div class="stat-value" id="detail-l40">-</div>
+      </div>
+    </div>
+    <canvas id="scoreDetailChart" height="180" style="margin-top:12px"></canvas>
+    <table class="score-table" style="margin-top:12px">
+      <thead><tr><th>GW</th><th>Score</th><th>Adversaire</th><th>Date</th></tr></thead>
+      <tbody id="score-history-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
 <!-- ===== DOCUMENTATION PAGE ===== -->
 <div id="page-docs" class="page">
   <div class="page-header">
@@ -1452,6 +1641,7 @@ function renderAll() {
   renderPlay();
   renderMarket();
   renderProfitability();
+  renderScores();
 }
 
 function rarityBadge(rarity) {
@@ -2438,6 +2628,214 @@ function renderProfitability() {
         '<td class="text-muted">' + (t.sell_date ? new Date(t.sell_date).toLocaleDateString('fr-FR') : '-') + '</td>' +
       '</tr>';
     }).join('');
+  }
+}
+
+// ============================================================
+//                    SCORES SO5
+// ============================================================
+
+let scoresData = [];
+let scoresFilter = 'all';
+let scoresChart = null;
+let scoreDetailChart = null;
+
+async function refreshScores() {
+  try {
+    const [all, portfolio, watchlist] = await Promise.all([
+      fetch('/api/scores').then(r => r.json()),
+      fetch('/api/scores/portfolio').then(r => r.json()),
+      fetch('/api/scores/watchlist').then(r => r.json()),
+    ]);
+    scoresData = { all, portfolio, watchlist };
+    renderScores();
+  } catch (e) {
+    console.error('Erreur chargement scores:', e);
+  }
+}
+
+function scoreBadge(val) {
+  if (val === null || val === undefined) return '<span class="score-badge none">-</span>';
+  let cls = 'mid';
+  if (val >= 60) cls = 'high';
+  else if (val < 40) cls = 'low';
+  return '<span class="score-badge ' + cls + '">' + val.toFixed(0) + '</span>';
+}
+
+function scoreBar(val) {
+  if (val === null || val === undefined) return '';
+  const pct = Math.min(val / 100 * 100, 100);
+  let color = '#EAB308';
+  if (val >= 60) color = '#22C55E';
+  else if (val < 40) color = '#EF4444';
+  return '<span class="score-bar"><span class="score-bar-fill" style="width:' + pct + '%;background:' + color + '"></span></span>';
+}
+
+function scoreTrend(l5, l15) {
+  if (l5 === null || l15 === null || l5 === undefined || l15 === undefined) return '';
+  const diff = l5 - l15;
+  if (diff > 3) return '<span class="score-trend up">&#9650; +' + diff.toFixed(0) + '</span>';
+  if (diff < -3) return '<span class="score-trend down">&#9660; ' + diff.toFixed(0) + '</span>';
+  return '<span class="score-trend flat">&#9644; =' + '</span>';
+}
+
+function filterScores(filter) {
+  scoresFilter = filter;
+  document.querySelectorAll('.score-filter-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  renderScores();
+}
+
+function renderScores() {
+  if (!scoresData || !scoresData.all) {
+    refreshScores();
+    return;
+  }
+
+  let data;
+  if (scoresFilter === 'portfolio') data = scoresData.portfolio || [];
+  else if (scoresFilter === 'watchlist') data = scoresData.watchlist || [];
+  else data = scoresData.all || [];
+
+  // KPIs
+  document.getElementById('scores-total').textContent = data.length;
+
+  if (data.length > 0) {
+    const withL5 = data.filter(d => d.avg_l5 !== null);
+    if (withL5.length > 0) {
+      const best = withL5.reduce((a, b) => (a.avg_l5 > b.avg_l5 ? a : b));
+      document.getElementById('scores-best-l5').textContent = (best.avg_l5 || 0).toFixed(0);
+      document.getElementById('scores-best-l5-name').textContent = best.player_name || best.slug;
+      const avgL5 = withL5.reduce((sum, d) => sum + (d.avg_l5 || 0), 0) / withL5.length;
+      document.getElementById('scores-avg-l5').textContent = avgL5.toFixed(0);
+    }
+    const dnpCount = data.reduce((sum, d) => sum + (d.dnp || 0), 0);
+    document.getElementById('scores-dnp').textContent = dnpCount;
+  }
+
+  // Table
+  const tbody = document.getElementById('scores-tbody');
+  const empty = document.getElementById('scores-empty');
+
+  if (data.length === 0) {
+    tbody.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+
+  empty.style.display = 'none';
+  tbody.innerHTML = data.map(s => {
+    const updated = s.updated_at ? new Date(s.updated_at).toLocaleDateString('fr-FR') : '-';
+    return '<tr onclick="showScoreDetail(\'' + s.slug + '\', \'' + (s.rarity || 'super_rare') + '\')" style="cursor:pointer">' +
+      '<td class="fw-600">' + (s.player_name || s.slug) + '</td>' +
+      '<td>' + rarityBadge(s.rarity) + '</td>' +
+      '<td>' + scoreBadge(s.last_score) + '</td>' +
+      '<td>' + scoreBadge(s.avg_l5) + ' ' + scoreBar(s.avg_l5) + '</td>' +
+      '<td>' + scoreBadge(s.avg_l15) + '</td>' +
+      '<td>' + scoreBadge(s.avg_l40) + '</td>' +
+      '<td>' + scoreTrend(s.avg_l5, s.avg_l15) + '</td>' +
+      '<td>' + (s.dnp > 0 ? '<span class="text-red fw-600">' + s.dnp + '</span>' : '<span class="text-muted">0</span>') + '</td>' +
+      '<td class="text-muted" style="font-size:0.78rem">' + updated + '</td>' +
+    '</tr>';
+  }).join('');
+
+  // Chart - L5 scores bar chart
+  const ctx = document.getElementById('scoresChart');
+  if (scoresChart) scoresChart.destroy();
+
+  const chartData = data.filter(d => d.avg_l5 !== null).slice(0, 20);
+  if (chartData.length > 0) {
+    scoresChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: chartData.map(d => (d.player_name || d.slug).substring(0, 15)),
+        datasets: [{
+          label: 'L5',
+          data: chartData.map(d => d.avg_l5),
+          backgroundColor: chartData.map(d => d.avg_l5 >= 60 ? 'rgba(34,197,94,0.6)' : d.avg_l5 >= 40 ? 'rgba(234,179,8,0.6)' : 'rgba(239,68,68,0.6)'),
+          borderRadius: 4,
+        }, {
+          label: 'L15',
+          data: chartData.map(d => d.avg_l15),
+          backgroundColor: 'rgba(124,58,237,0.3)',
+          borderRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { labels: { color: '#8A8AB5' } } },
+        scales: {
+          x: { ticks: { color: '#8A8AB5', font: { size: 10 } }, grid: { display: false } },
+          y: { ticks: { color: '#8A8AB5' }, grid: { color: 'rgba(37,37,96,0.3)' }, max: 100 },
+        },
+      },
+    });
+  }
+}
+
+async function showScoreDetail(slug, rarity) {
+  const detail = document.getElementById('score-detail');
+  detail.style.display = 'block';
+
+  try {
+    const res = await fetch('/api/scores/' + slug + '?rarity=' + rarity);
+    const data = await res.json();
+
+    document.getElementById('score-detail-name').textContent = (data.score?.player_name || slug) + ' (' + rarity.replace('_', ' ') + ')';
+    document.getElementById('detail-last-score').textContent = data.score?.last_score?.toFixed(0) || '-';
+    document.getElementById('detail-l5').textContent = data.score?.avg_l5?.toFixed(0) || '-';
+    document.getElementById('detail-l15').textContent = data.score?.avg_l15?.toFixed(0) || '-';
+    document.getElementById('detail-l40').textContent = data.score?.avg_l40?.toFixed(0) || '-';
+
+    // History table
+    const tbody = document.getElementById('score-history-tbody');
+    if (data.history && data.history.length > 0) {
+      tbody.innerHTML = data.history.map(h => {
+        return '<tr>' +
+          '<td class="fw-600">GW' + (h.gw_number || '-') + '</td>' +
+          '<td>' + (h.played === 0 ? '<span class="score-dnp">DNP</span>' : scoreBadge(h.score)) + '</td>' +
+          '<td>' + (h.opponent || '-') + '</td>' +
+          '<td class="text-muted">' + (h.match_date || '-') + '</td>' +
+        '</tr>';
+      }).join('');
+
+      // Chart
+      const ctx = document.getElementById('scoreDetailChart');
+      if (scoreDetailChart) scoreDetailChart.destroy();
+
+      const reversed = [...data.history].reverse();
+      scoreDetailChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: reversed.map(h => 'GW' + (h.gw_number || '?')),
+          datasets: [{
+            label: 'Score',
+            data: reversed.map(h => h.played === 0 ? null : h.score),
+            borderColor: '#7C3AED',
+            backgroundColor: 'rgba(124,58,237,0.1)',
+            fill: true,
+            tension: 0.3,
+            spanGaps: true,
+            pointRadius: 4,
+            pointBackgroundColor: reversed.map(h => h.played === 0 ? '#EF4444' : h.score >= 60 ? '#22C55E' : h.score >= 40 ? '#EAB308' : '#EF4444'),
+          }],
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#8A8AB5', font: { size: 10 } }, grid: { display: false } },
+            y: { ticks: { color: '#8A8AB5' }, grid: { color: 'rgba(37,37,96,0.3)' }, min: 0, max: 100 },
+          },
+        },
+      });
+    } else {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Aucun historique disponible</td></tr>';
+    }
+
+    detail.scrollIntoView({ behavior: 'smooth' });
+  } catch (e) {
+    console.error('Erreur detail score:', e);
   }
 }
 
