@@ -197,6 +197,21 @@ function createRouter(botStats) {
     res.json(db.getActiveOpportunities());
   });
 
+  // === MERCATO (rumeurs de transfert) ===
+
+  router.get('/api/mercato', (req, res) => {
+    const limit = parseInt(req.query.limit) || 50;
+    const league = req.query.league || null;
+    res.json(db.getRecentRumors(limit, league));
+  });
+
+  router.post('/api/mercato/scan', (req, res) => {
+    res.json({ message: 'Scan mercato lance' });
+    if (typeof global.triggerMercatoScan === 'function') {
+      global.triggerMercatoScan();
+    }
+  });
+
   // === JOUER (Play) ===
 
   router.get('/api/play/stats', (req, res) => {

@@ -52,11 +52,21 @@ Dashboard complet pour gerer ton activite Sorare : suivi de marche, analyse de p
 - Alertes Discord quand un prix passe sous le seuil
 - Detection automatique d'opportunites (decotes, anomalies)
 
+### Veille Mercato (rumeurs de transfert)
+- Surveillance de `sorarescore.com/transfer-rumors` (528+ rumeurs, mise a jour quotidienne)
+- **Priorite : les departs de MLS / J.League / K League vers l'Europe** (la ou une carte Sorare peut prendre le plus de valeur)
+- Chaque rumeur : joueur, poste, age, valeur de marche, probabilite, club de depart -> club cible
+- Classification automatique de la ligue de depart et de la destination (Europe / Saudi / Liga MX / Bresil / Chine)
+- Alerte **prioritaire** si la rumeur concerne un joueur de ta watchlist ou de ton portfolio
+- Deduplication : chaque rumeur n'est notifiee qu'une fois
+- Commande `/mercato` et route `GET /api/mercato`
+
 ### Alertes Discord
 - Notification nouveau listing
 - Alerte prix sous seuil
 - Opportunites de marche detectees
 - Alertes encheres sous budget
+- Rumeurs mercato (departs MLS/J.League/K League -> Europe)
 
 ---
 
@@ -111,7 +121,16 @@ Dashboard complet pour gerer ton activite Sorare : suivi de marche, analyse de p
 | `GOOGLE_CREDENTIALS` | JSON de ton service account Google |
 | `GOOGLE_SHEET_ID` | ID de ta Google Sheet |
 
-7. Railway deploie automatiquement a chaque push !
+7. **Optionnel - Veille Mercato** (active par defaut, aucune cle requise) :
+
+| Variable | Valeur | Defaut |
+|----------|--------|--------|
+| `MERCATO_ENABLED` | `true` / `false` | `true` |
+| `MERCATO_SCAN_INTERVAL_MS` | Intervalle du scan en ms | `7200000` (2h) |
+| `MERCATO_MIN_PROBABILITY` | Proba mini pour alerter (0-100) | `0` |
+| `MERCATO_EUROPE_ONLY` | `true` = uniquement les departs vers l'Europe | `false` |
+
+8. Railway deploie automatiquement a chaque push !
 
 ### Etape 4 : Acceder au Dashboard
 
@@ -136,6 +155,7 @@ Dashboard complet pour gerer ton activite Sorare : suivi de marche, analyse de p
 | `/opportunites` | Afficher les opportunites detectees |
 | `/import joueur rarete` | Importer l'historique de ventes |
 | `/scan` | Lancer un scan immediat |
+| `/mercato [ligue]` | Dernieres rumeurs de transfert (filtre MLS / J.League / K League) |
 | `/stats` | Statistiques du bot |
 
 ---
@@ -172,6 +192,8 @@ sorarebot/
       market.js          # Scraping listings et ventes
       auctions.js        # Scraping encheres
       opportunities.js   # Detection automatique d'opportunites
+      mercato.js         # Veille rumeurs mercato (sorarescore.com)
+      leagues.js         # Classification club -> ligue (MLS/J.League/K League/...)
     ev/
       calculator.js      # Calcul EV par ligue
     discord/
@@ -186,6 +208,7 @@ sorarebot/
 | Marche | 5 min | Prix, listings, alertes, opportunites |
 | Encheres | 10 min | Encheres actives, alertes bid |
 | Ventes | 6h | Historique des ventes |
+| Mercato | 2h | Rumeurs de transfert (departs MLS/J.League/K League) |
 
 ### Base de donnees SQLite
 

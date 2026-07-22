@@ -4,6 +4,7 @@
 const { EmbedBuilder } = require('discord.js');
 const db = require('../db');
 const ev = require('../ev/calculator');
+const { REGION_LABEL, REGION_FLAG } = require('../scraper/leagues');
 
 function createHandler(scanMarketFn, scanAuctionsFn, botStats) {
   return async function handleInteraction(interaction) {
@@ -482,6 +483,44 @@ function createHandler(scanMarketFn, scanAuctionsFn, botStats) {
             .setColor(0x22C55E)
             .addFields(fields)
             .setFooter({ text: opps.length + ' opportunites actives' });
+
+          await interaction.editReply({ embeds: [embed] });
+          break;
+        }
+
+        case 'mercato': {
+          await interaction.deferReply();
+          const ligue = options.getString('ligue');
+          const rumors = db.getRecentRumors(15, ligue);
+
+          if (rumors.length === 0) {
+            await interaction.editReply('Aucune rumeur enregistree pour le moment' +
+              (ligue ? ' (' + (REGION_LABEL[ligue] || ligue) + ')' : '') +
+              '. Le prochain scan mercato la remplira.');
+            return;
+          }
+
+          const fields = rumors.map(r => {
+            const flag = REGION_FLAG[r.source_league] || '';
+            const star = r.in_watchlist ? '⭐ ' : '';
+            const dest = r.to_europe ? '🇪🇺 Europe' : (REGION_FLAG[r.target_region] || '') + ' ' + (REGION_LABEL[r.target_region] || r.target_region);
+            const prob = r.probability != null ? r.probability + '%' : 'n/a';
+            const mv = r.market_value
+              ? (r.market_value >= 1000000 ? (r.market_value / 1000000).toFixed(1) + 'M€' : Math.round(r.market_value / 1000) + 'k€')
+              : 'N/A';
+            return {
+              name: star + (r.player_name || '?') + ' (' + (r.role || '?') + ', ' + (r.age != null ? r.age + ' ans' : '?') + ')',
+              value: flag + ' ' + r.current_club + '  →  ' + dest + ' · ' + r.target_club + '\n' +
+                'Valeur: ' + mv + ' | Proba: ' + prob + ' | ' + (r.rumor_date || ''),
+              inline: false,
+            };
+          });
+
+          const embed = new EmbedBuilder()
+            .setTitle('Rumeurs Mercato' + (ligue ? ' - ' + (REGION_LABEL[ligue] || ligue) : ' (MLS / J.League / K League)'))
+            .setColor(0x0EA5E9)
+            .addFields(fields.slice(0, 15))
+            .setFooter({ text: rumors.length + ' rumeurs · ⭐ = watchlist/portfolio · source: sorarescore.com' });
 
           await interaction.editReply({ embeds: [embed] });
           break;

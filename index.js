@@ -15,6 +15,8 @@ const { createBrowser } = require('./src/scraper/browser');
 const { scrapePlayerListings, scrapeClubListings, scrapeSalesHistory } = require('./src/scraper/market');
 const { scrapeAuctions } = require('./src/scraper/auctions');
 const { detectSecondaryOpportunities, detectAuctionOpportunities } = require('./src/scraper/opportunities');
+const { fetchTransferRumors, filterRumors, rumorKey } = require('./src/scraper/mercato');
+const { REGION_LABEL, REGION_FLAG } = require('./src/scraper/leagues');
 const ev = require('./src/ev/calculator');
 const discordCommands = require('./src/discord/commands');
 const { createHandler } = require('./src/discord/handlers');
@@ -359,6 +361,138 @@ async function scanSalesHistory() {
   }
 }
 
+// ============================================================
+//                    SCAN MERCATO (Rumeurs transferts)
+// ============================================================
+
+// Un joueur est-il deja surveille (watchlist ou portfolio) ?
+function matchesWatchlist(rumor, watchPlayers, portfolioSlugs) {
+  const slug = (rumor.playerSlug || '').toLowerCase();
+  const name = (rumor.playerName || '').toLowerCase();
+  const inWatch = watchPlayers.some(p =>
+    (slug && p.slug && slug === p.slug.toLowerCase()) ||
+    (name && p.name && name.includes(p.name.toLowerCase().split(' ').pop()))
+  );
+  const inPortfolio = slug && portfolioSlugs.has(slug);
+  return inWatch || inPortfolio;
+}
+
+async function scanMercato() {
+  if (!config.MERCATO_ENABLED) return;
+
+  console.log('=== SCAN MERCATO === ' + new Date().toLocaleTimeString('fr-FR'));
+
+  try {
+    const rumors = await fetchTransferRumors();
+    console.log('  ' + rumors.length + ' rumeurs recuperees');
+
+    const targeted = filterRumors(rumors, {
+      minProbability: config.MERCATO_MIN_PROBABILITY,
+      europeOnly: config.MERCATO_EUROPE_ONLY,
+    });
+    console.log('  ' + targeted.length + ' rumeurs ciblees (MLS/J.League/K League' +
+      (config.MERCATO_EUROPE_ONLY ? ' -> Europe' : '') + ')');
+
+    // Contexte watchlist / portfolio pour prioriser
+    const watchlist = db.getWatchlist();
+    const portfolioSlugs = new Set(db.getPortfolio().map(c => (c.player_slug || '').toLowerCase()));
+
+    // Insertion + dedup
+    let newCount = 0;
+    for (const r of targeted) {
+      const inWatchlist = matchesWatchlist(r, watchlist.players, portfolioSlugs);
+      const isNew = db.insertTransferRumor({
+        rumorKey: rumorKey(r),
+        playerName: r.playerName,
+        playerSlug: r.playerSlug,
+        age: r.age,
+        role: r.role,
+        marketValue: r.marketValue,
+        probability: r.probability,
+        currentClub: r.currentClub.name,
+        currentClubSlug: r.currentClub.slug,
+        sourceLeague: r.sourceRegion,
+        targetClub: r.targetClub.name,
+        targetClubSlug: r.targetClub.slug,
+        targetRegion: r.targetRegion,
+        toEurope: r.toEurope,
+        inWatchlist,
+        rumorDate: r.date,
+      });
+      if (isNew) newCount++;
+    }
+    console.log('  ' + newCount + ' nouvelles rumeurs');
+
+    // Alertes Discord pour les nouvelles rumeurs non notifiees
+    const unnotified = db.getUnnotifiedRumors();
+    if (unnotified.length > 0) {
+      // Une alerte prioritaire par rumeur touchant la watchlist/portfolio
+      const priority = unnotified.filter(r => r.in_watchlist);
+      for (const r of priority) {
+        await sendDiscordAlert(buildMercatoEmbed(r, true));
+      }
+
+      // Les autres regroupees en un seul embed (max 10)
+      const others = unnotified.filter(r => !r.in_watchlist).slice(0, 10);
+      if (others.length > 0) {
+        const embed = new EmbedBuilder()
+          .setTitle('Mercato : departs MLS / J.League / K League (' + others.length + ')')
+          .setColor(0x0EA5E9)
+          .setDescription(others.map(r => {
+            const flag = REGION_FLAG[r.source_league] || '';
+            const dest = r.to_europe ? '🇪🇺 Europe' : (REGION_FLAG[r.target_region] || '') + ' ' + (REGION_LABEL[r.target_region] || r.target_region);
+            const prob = r.probability != null ? ' · ' + r.probability + '%' : '';
+            const mv = r.market_value ? ' · ' + formatValue(r.market_value) : '';
+            return '**' + (r.player_name || '?') + '** (' + (r.role || '?') + ')' + mv + prob + '\n' +
+              flag + ' ' + r.current_club + '  →  ' + dest + ' · ' + r.target_club;
+          }).join('\n\n'))
+          .setFooter({ text: 'Source: sorarescore.com' })
+          .setTimestamp();
+        await sendDiscordAlert(embed);
+      }
+
+      db.markRumorsNotified(unnotified.map(r => r.id));
+    }
+
+    console.log('Scan mercato termine.');
+  } catch (error) {
+    console.error('Erreur scan mercato:', error.message);
+    stats.errors++;
+  }
+}
+
+function formatValue(v) {
+  if (!v) return 'N/A';
+  if (v >= 1000000) return (v / 1000000).toFixed(v % 1000000 === 0 ? 0 : 1) + 'M€';
+  if (v >= 1000) return Math.round(v / 1000) + 'k€';
+  return v + '€';
+}
+
+function buildMercatoEmbed(r, priority) {
+  const flag = REGION_FLAG[r.source_league] || '';
+  const destLabel = r.to_europe
+    ? '🇪🇺 Europe'
+    : (REGION_FLAG[r.target_region] || '') + ' ' + (REGION_LABEL[r.target_region] || r.target_region);
+
+  const embed = new EmbedBuilder()
+    .setTitle((priority ? '⭐ ' : '') + 'Rumeur mercato : ' + (r.player_name || '?'))
+    .setColor(priority ? 0xF59E0B : r.to_europe ? 0x22C55E : 0x0EA5E9)
+    .addFields(
+      { name: 'Depart', value: flag + ' ' + r.current_club + '\n' + (REGION_LABEL[r.source_league] || r.source_league), inline: true },
+      { name: 'Destination', value: destLabel + '\n' + r.target_club, inline: true },
+      { name: 'Poste / Age', value: (r.role || '?') + ' · ' + (r.age != null ? r.age + ' ans' : '?'), inline: true },
+      { name: 'Valeur marche', value: formatValue(r.market_value), inline: true },
+      { name: 'Probabilite', value: r.probability != null ? r.probability + '%' : 'Non evaluee', inline: true },
+    )
+    .setFooter({ text: 'Source: sorarescore.com' + (priority ? ' · dans ta watchlist/portfolio' : '') })
+    .setTimestamp();
+
+  if (r.player_slug) {
+    embed.setURL('https://sorarescore.com/player/' + r.player_slug);
+  }
+  return embed;
+}
+
 // Import player sales (used by Discord command)
 async function importPlayerSales(playerSlug, rarity) {
   let browser;
@@ -390,6 +524,7 @@ async function importPlayerSales(playerSlug, rarity) {
 // Expose globally for Discord handler
 global.importPlayerSales = importPlayerSales;
 global.triggerScan = () => scanMarket();
+global.triggerMercatoScan = () => scanMercato();
 
 // ============================================================
 //                    DEMARRAGE
@@ -410,6 +545,7 @@ async function start() {
   console.log('Portfolio           : ' + db.getPortfolio().length + ' cartes');
   console.log('Scan marche         : toutes les ' + (config.SCAN_INTERVAL_MS / 60000).toFixed(0) + ' min');
   console.log('Scan encheres       : toutes les ' + (config.AUCTION_SCAN_INTERVAL_MS / 60000).toFixed(0) + ' min');
+  console.log('Scan mercato        : ' + (config.MERCATO_ENABLED ? 'toutes les ' + (config.MERCATO_SCAN_INTERVAL_MS / 3600000).toFixed(0) + 'h (MLS/J.League/K League' + (config.MERCATO_EUROPE_ONLY ? ' -> Europe' : '') + ')' : 'Desactive'));
   console.log('Proxy NordVPN       : ' + (config.NORDVPN_USER ? 'Active' : 'Non configure'));
   console.log('Discord             : ' + (config.DISCORD_TOKEN ? 'Configure' : 'Non configure'));
   console.log('Google Sheets       : ' + (config.GOOGLE_CREDENTIALS ? 'Configure' : 'Non configure'));
@@ -455,6 +591,11 @@ async function start() {
 
   setTimeout(scanSalesHistory, 60000);
   setInterval(scanSalesHistory, config.SALES_SCAN_INTERVAL_MS);
+
+  if (config.MERCATO_ENABLED) {
+    setTimeout(scanMercato, 20000);
+    setInterval(scanMercato, config.MERCATO_SCAN_INTERVAL_MS);
+  }
 }
 
 start().catch(console.error);

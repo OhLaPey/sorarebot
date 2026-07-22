@@ -157,6 +157,15 @@ const commands = [
     .setDescription('Affiche les opportunites de marche detectees'),
 
   new SlashCommandBuilder()
+    .setName('mercato')
+    .setDescription('Dernieres rumeurs de transfert (MLS / J.League / K League -> Europe)')
+    .addStringOption(opt => opt.setName('ligue').setDescription('Filtrer par ligue de depart').addChoices(
+      { name: 'MLS', value: 'MLS' },
+      { name: 'J.League', value: 'J_LEAGUE' },
+      { name: 'K League', value: 'K_LEAGUE' },
+    )),
+
+  new SlashCommandBuilder()
     .setName('recommandation')
     .setDescription('Recommandation de la meilleure ligue a jouer'),
 
