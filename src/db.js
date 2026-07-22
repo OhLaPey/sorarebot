@@ -214,6 +214,29 @@ function createTables() {
       UNIQUE(gw_number, league)
     );
 
+    -- Rumeurs mercato (sorarescore.com/transfer-rumors)
+    CREATE TABLE IF NOT EXISTS transfer_rumors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rumor_key TEXT NOT NULL UNIQUE,
+      player_name TEXT,
+      player_slug TEXT,
+      age INTEGER,
+      role TEXT,
+      market_value REAL,
+      probability REAL,
+      current_club TEXT,
+      current_club_slug TEXT,
+      source_league TEXT,
+      target_club TEXT,
+      target_club_slug TEXT,
+      target_region TEXT,
+      to_europe INTEGER DEFAULT 0,
+      in_watchlist INTEGER DEFAULT 0,
+      rumor_date TEXT,
+      notified INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     -- Recherches marche sauvegardees
     CREATE TABLE IF NOT EXISTS market_searches (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -238,6 +261,8 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_opportunities_active ON opportunities(active, notified);
     CREATE INDEX IF NOT EXISTS idx_lineups_gw ON lineups(gw_number);
     CREATE INDEX IF NOT EXISTS idx_gw_results_gw ON gw_results(gw_number);
+    CREATE INDEX IF NOT EXISTS idx_transfer_rumors_notified ON transfer_rumors(notified);
+    CREATE INDEX IF NOT EXISTS idx_transfer_rumors_league ON transfer_rumors(source_league);
   `);
 }
 
@@ -763,6 +788,50 @@ function getProfitabilityOverview() {
   };
 }
 
+// ============================================================
+//            TRANSFER RUMORS (Veille mercato)
+// ============================================================
+
+// Insere une rumeur si elle n'existe pas deja. Retourne true si nouvelle.
+function insertTransferRumor(data) {
+  const result = db.prepare(`
+    INSERT OR IGNORE INTO transfer_rumors
+      (rumor_key, player_name, player_slug, age, role, market_value, probability,
+       current_club, current_club_slug, source_league, target_club, target_club_slug,
+       target_region, to_europe, in_watchlist, rumor_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    data.rumorKey, data.playerName, data.playerSlug, data.age, data.role,
+    data.marketValue, data.probability, data.currentClub, data.currentClubSlug,
+    data.sourceLeague, data.targetClub, data.targetClubSlug, data.targetRegion,
+    data.toEurope ? 1 : 0, data.inWatchlist ? 1 : 0, data.rumorDate
+  );
+  return result.changes > 0;
+}
+
+function getUnnotifiedRumors() {
+  return db.prepare(
+    'SELECT * FROM transfer_rumors WHERE notified = 0 ORDER BY to_europe DESC, probability DESC, created_at DESC'
+  ).all();
+}
+
+function markRumorsNotified(ids) {
+  if (!ids || ids.length === 0) return;
+  const placeholders = ids.map(() => '?').join(',');
+  return db.prepare('UPDATE transfer_rumors SET notified = 1 WHERE id IN (' + placeholders + ')').run(...ids);
+}
+
+function getRecentRumors(limit, sourceLeague) {
+  if (sourceLeague) {
+    return db.prepare(
+      'SELECT * FROM transfer_rumors WHERE source_league = ? ORDER BY created_at DESC LIMIT ?'
+    ).all(sourceLeague, limit || 20);
+  }
+  return db.prepare(
+    'SELECT * FROM transfer_rumors ORDER BY to_europe DESC, created_at DESC LIMIT ?'
+  ).all(limit || 20);
+}
+
 function getDb() {
   return db;
 }
@@ -782,4 +851,5 @@ module.exports = {
   saveLineup, getLineup, getLineups, saveGWResult, getGWResults, getGWResultsByLeague, getPlayStats,
   getAllListedPlayers, searchMarket, getRecentSales,
   getProfitabilityOverview,
+  insertTransferRumor, getUnnotifiedRumors, markRumorsNotified, getRecentRumors,
 };
